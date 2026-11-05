@@ -54,21 +54,55 @@
     setTimeout(() => t.remove(), 3800);
   }
 
-  function traduzErro(m) {
+  /* Erros: os que a pessoa pode resolver viram uma mensagem amigável;
+     os técnicos nunca aparecem crus. Ao carregar uma tela, mostram a tela de manutenção;
+     depois de carregada, um aviso genérico (a terapeuta vê o detalhe técnico). */
+  let loadingView = false;
+  function friendlyError(m) {
     m = m || '';
     if (/Invalid login/i.test(m)) return 'E-mail ou senha incorretos.';
-    if (/row-level security|permission denied/i.test(m)) return 'Você não tem permissão para isso.';
     if (/rate limit/i.test(m)) return 'Muitas tentativas. Aguarde alguns minutos.';
     if (/Password should be|at least 6/i.test(m)) return 'A senha precisa ter pelo menos 6 caracteres.';
+    if (/same as the old|different from the old/i.test(m)) return 'A nova senha precisa ser diferente da atual.';
     if (/JWT|expired/i.test(m)) return 'Sua sessão expirou. Entre novamente.';
     if (/exceeded the maximum allowed size|Payload too large/i.test(m)) return 'Arquivo grande demais (máximo 50 MB).';
-    return m || 'Algo deu errado. Tente de novo.';
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Sem conexão com a internet. Verifique e tente de novo.';
+    return null;
+  }
+  function traduzErro(m) {
+    return friendlyError(m) || (me && me.role === 'therapist'
+      ? 'Algo deu errado. Detalhe técnico: ' + m
+      : 'Não foi possível concluir agora. Tente novamente em instantes.');
+  }
+  async function q(p) {
+    let res;
+    try { res = await p; } catch (e) { res = { error: e }; }
+    const { data, error } = res;
+    if (error) {
+      const f = friendlyError(error.message);
+      if (f || !loadingView) toast(f || traduzErro(error.message), true);
+      throw error;
+    }
+    return data;
   }
 
-  async function q(p) {
-    const { data, error } = await p;
-    if (error) { toast(traduzErro(error.message), true); throw error; }
-    return data;
+  function viewMaintenance(err) {
+    const msg = (err && (err.message || String(err))) || '';
+    const offline = !navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(msg);
+    console.error(err);
+    $app.innerHTML = `<main class="login maint">
+      <div class="brand">${icon('leaf', 28)}</div>
+      <h1>${offline ? 'Sem conexão' : 'Estamos em manutenção'}</h1>
+      <p class="lead">${offline
+        ? 'Parece que você está sem internet. Verifique sua conexão e tente de novo.'
+        : `Estamos fazendo alguns ajustes para deixar o ${esc(APP)} ainda melhor. Volte em alguns minutos — seus dados estão seguros.`}</p>
+      <button class="btn" type="button" id="retry">Tentar de novo</button>
+      ${me && me.role === 'therapist' && !offline ? `<details class="card"><summary>Detalhes técnicos (só você vê)</summary><p class="small prose">${esc(msg)}</p></details>` : ''}
+      ${me ? '<button class="btn-link" type="button" id="maint-out">Sair</button>' : ''}
+    </main>`;
+    document.getElementById('retry').addEventListener('click', () => route());
+    const out = document.getElementById('maint-out');
+    if (out) out.addEventListener('click', () => sb.auth.signOut());
   }
 
   async function signedUrls(paths) {
@@ -236,6 +270,7 @@
 
   /* ================= estrutura ================= */
   function shell(content, active) {
+    loadingView = false;
     const nav = me.role === 'therapist'
       ? [['pacientes', 'Pacientes', 'users'], ['biblioteca', 'Biblioteca', 'book'], ['conta', 'Conta', 'user']]
       : [['inicio', 'Início', 'home'], ['conteudos', 'Conteúdos', 'book'], ['diario', 'Diário', 'pen'], ['sessoes', 'Sessões', 'cal']];
@@ -264,7 +299,8 @@
   async function loadMe() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) { me = null; return; }
-    const { data } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    const { data, error } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (error) throw error;
     me = data || null;
     if (!me) toast('Perfil não encontrado. Fale com sua terapeuta.', true);
   }
@@ -292,9 +328,11 @@
       btn.disabled = true;
       try {
         await q(sb.auth.signInWithPassword({ email, password }));
+      } catch (err) { btn.disabled = false; return; }
+      try {
         await loadMe();
         if (me) go('#/'); else { await sb.auth.signOut(); btn.disabled = false; }
-      } catch (err) { btn.disabled = false; }
+      } catch (err) { viewMaintenance(err); }
     });
     $('#esqueci').addEventListener('click', async () => {
       const email = $('#email').value.trim();
@@ -1038,6 +1076,7 @@
     const h = location.hash || '#/';
     if (!me) return viewLogin();
     let m;
+    loadingView = true;
     try {
       if (h === '#/conta') return await viewAccount();
       if ((m = h.match(/^#\/conteudo\/([\w-]+)$/))) return await viewContent(m[1]);
@@ -1053,12 +1092,14 @@
       if (h === '#/sessoes') return await viewSessions();
       return await viewHome();
     } catch (err) {
-      console.error(err);
+      loadingView = false;
       if (/JWT|expired/i.test(err && err.message)) { await sb.auth.signOut(); return; }
-      $app.innerHTML = `<main class="login"><h1>Não foi possível carregar</h1><p class="lead">Verifique sua conexão e tente de novo.</p><button class="btn" type="button" id="retry">Tentar de novo</button></main>`;
-      document.getElementById('retry').addEventListener('click', route);
+      viewMaintenance(err);
     }
   }
+
+  // Qualquer erro inesperado que escape: nunca mostrar texto técnico ao paciente
+  window.addEventListener('unhandledrejection', (e) => { console.error(e.reason); e.preventDefault(); });
 
   sb.auth.onAuthStateChange((event) => {
     if (event === 'PASSWORD_RECOVERY') recovering = true;
@@ -1067,8 +1108,10 @@
   window.addEventListener('hashchange', route);
 
   (async function boot() {
-    const { data: { session } } = await sb.auth.getSession();
-    if (session) await loadMe();
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (session) await loadMe();
+    } catch (err) { return viewMaintenance(err); }
     if (/access_token|type=recovery|error_description/.test(location.hash)) {
       history.replaceState(null, '', location.pathname + (recovering && me ? '#/conta' : '#/'));
     }

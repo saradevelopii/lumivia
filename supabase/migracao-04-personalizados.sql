@@ -57,3 +57,6 @@ create policy materiais_read on storage.objects for select to authenticated usin
     or ((storage.foldername(name))[1] = 'conteudos' and public.content_file_visible(name))
   )
 );
+
+-- Faz o Supabase reconhecer as tabelas novas na hora
+notify pgrst, 'reload schema';
