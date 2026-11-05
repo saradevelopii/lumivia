@@ -124,6 +124,18 @@ p { margin: 0; }
 .for-you { display: flex; flex-direction: column; gap: 12px; background: var(--amber-bg); border-radius: 20px; padding: 14px; }
 .rows li > span a { text-decoration: none; font-weight: 500; }
 
+.badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.terms { gap: 8px; }
+.terms h3 { font-size: 15px; color: var(--brand); margin: 12px 0 0; }
+.terms ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.terms p, .terms li { font-size: 15px; color: #2C3832; }
+.terms-alert { background: var(--amber-bg); border-radius: 12px; padding: 12px 14px; }
+details.cond { border-top: 1px solid #EEF1EE; padding-top: 12px; }
+details.cond > summary { cursor: pointer; font-weight: 600; color: var(--brand); min-height: 32px; }
+details.cond form { margin-top: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 420px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
 /* ---------- navegação inferior ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0;

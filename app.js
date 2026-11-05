@@ -11,14 +11,9 @@
   const MOODS = ['Difícil', 'Baixo', 'Ok', 'Bem', 'Ótimo'];
   const KINDS = { video: 'Vídeo', texto: 'Texto', exercicio: 'Exercício', audio: 'Áudio', pdf: 'PDF', link: 'Link' };
   const BUCKET = 'materiais';
-  // Ao mudar o texto dos Acordos, troque a versão: todos os pacientes serão convidados a aceitar de novo.
-  const CONSENT_VERSION = 'acordos-v1';
-  // Como cada versão aparece na tela e no comprovante: sempre o mês e as condições do documento.
-  // Ao criar uma nova versão, acrescente uma linha aqui (as antigas continuam valendo para quem aceitou).
-  const CONSENT_LABELS = {
-    'acordos-v1': 'novembro de 2026 (R$ 400,00 · tolerância de 15 min)'
-  };
-  const versionLabel = (v) => CONSENT_LABELS[v] || v;
+  // Acordos do processo: o texto-base é o mesmo para todos; as condições vêm da ficha de cada paciente.
+  // Rótulos de aceites feitos antes do termo individual:
+  const LEGACY_LABELS = { 'acordos-v1': 'novembro de 2026 (R$ 400,00 · tolerância de 15 min)' };
   const DAY = 864e5;
 
   if (!cfg.SUPABASE_URL || /SEU-PROJETO/.test(cfg.SUPABASE_URL) || !window.supabase) {
@@ -181,21 +176,139 @@
     const br = /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
     return `${br} · ${os}`;
   }
-  function termsCard(cs, pendingHint) {
+  const brl = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const monthYear = (d) => new Date(d).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const FREQ = {
+    semanal: { label: 'Semanal', adj: 'semanal', incl: 'as sessões semanais do mês' },
+    quinzenal: { label: 'Quinzenal', adj: 'quinzenal', incl: 'as sessões quinzenais do mês' },
+    mensal: { label: 'Mensal', adj: 'mensal', incl: 'a sessão do mês' }
+  };
+  const FORMATS = { online: 'Online', presencial: 'Presencial', 'online e presencial': 'Online e presencial' };
+
+  function termsLabel(t, legacyVersion) {
+    if (!t) return LEGACY_LABELS[legacyVersion] || legacyVersion || '';
+    return `${monthYear(t.versioned_at || t.updated_at || new Date())} (${brl(t.monthly_fee)} · tolerância de 15 min)`;
+  }
+
+  // Texto completo dos acordos com as condições do paciente
+  function termsBody(t) {
+    const f = FREQ[t.frequency] || FREQ.semanal;
+    const fmt = t.format === 'online' ? 'online, por chamada de vídeo. O link é enviado antes de cada encontro.'
+      : t.format === 'presencial' ? 'presencial, no consultório.'
+      : 'online (por chamada de vídeo) ou presencial, conforme combinado para cada encontro.';
+    return `
+      <p>Que bom que você decidiu começar essa jornada. Este documento reúne os combinados que tornam o nosso trabalho mais claro, seguro e tranquilo para você e para mim.</p>
+      <h3>1. Sobre o acompanhamento</h3>
+      <p>O acompanhamento é um processo de desenvolvimento pessoal, voltado ao autoconhecimento, ao fortalecimento emocional e à construção de novos hábitos, organizado em fases.</p>
+      <p>Este trabalho <strong>não substitui</strong> acompanhamento médico, psicológico ou psiquiátrico. Se você faz algum tratamento, mantenha-o normalmente e, se quiser, me conte para que eu possa considerar isso no nosso processo.</p>
+      <h3>2. Sessões</h3>
+      <ul>
+        <li><strong>Formato:</strong> ${fmt}</li>
+        <li><strong>Frequência e duração:</strong> ${f.adj}, com ${esc(t.duration_min)} minutos.</li>
+        ${t.format !== 'presencial' ? '<li><strong>Ambiente:</strong> nas sessões online, escolha um lugar reservado e silencioso, de preferência com fone de ouvido, para que você possa falar com liberdade.</li>' : ''}
+        <li><strong>Pontualidade:</strong> há uma tolerância de 15 minutos de atraso, para ambas as partes. Atrasos do(a) paciente não estendem o horário da sessão; se eu me atrasar, o tempo é reposto. Passados 15 minutos sem aviso, a sessão é considerada falta, ou remarcada sem custo quando o atraso for meu.</li>
+      </ul>
+      <h3>3. Remarcações, faltas e pagamento</h3>
+      <ul>
+        <li>Remarcações com <strong>pelo menos 24 horas de antecedência</strong> não têm custo.</li>
+        <li>Cancelamentos com menos de 24 horas ou ausência sem aviso são considerados sessão realizada.</li>
+        <li>Situações de emergência ou saúde são avaliadas com cuidado, caso a caso.</li>
+        <li><strong>Valor mensal:</strong> ${brl(t.monthly_fee)}, incluindo ${f.incl}.</li>
+        <li><strong>Pagamento:</strong> ${esc(t.payment_method)}, todo dia ${esc(t.payment_day)} de cada mês.</li>
+      </ul>
+      <h3>4. Sigilo</h3>
+      <p>Tudo o que você compartilha nas sessões e na plataforma é <strong>confidencial</strong>. O sigilo só pode ser quebrado em situações de risco à sua vida ou à de outras pessoas, ou por determinação legal. Nesses casos, sempre que possível, conversaremos antes.</p>
+      <h3>5. Plataforma ${esc(APP)}</h3>
+      <ul>
+        <li>Seu acesso é pessoal. Guarde sua senha e não a compartilhe.</li>
+        <li>Os conteúdos (vídeos, textos, exercícios e áudios) são para o seu uso pessoal. Por favor, não os compartilhe nem os publique.</li>
+        <li>Eu leio o seu diário antes de cada sessão. Ele <strong>não é acompanhado em tempo real</strong>.</li>
+      </ul>
+      <p class="terms-alert"><strong>A plataforma não é um canal de emergência.</strong> Em uma crise, ligue para o <strong>CVV — 188</strong> (24 horas, gratuito) ou para o <strong>SAMU — 192</strong>, ou vá ao pronto-socorro mais próximo.</p>
+      <h3>6. Seus dados pessoais (LGPD)</h3>
+      <p>Para o acompanhamento, são registrados seu nome, e-mail, foto de perfil (se você adicionar), registros do diário, tarefas e resumos das sessões. Esses dados são usados apenas para o seu processo, ficam guardados em um serviço com acesso restrito e não são compartilhados com terceiros.</p>
+      <p>Você pode, a qualquer momento, pedir para ver, corrigir ou excluir seus dados, e também retirar este consentimento, conforme a Lei Geral de Proteção de Dados (Lei nº 13.709/2018).</p>
+      <h3>7. Encerramento</h3>
+      <p>Você pode interromper o acompanhamento quando quiser. Se possível, avise com antecedência: uma sessão de encerramento ajuda a revisar o caminho percorrido e a planejar os próximos passos.</p>
+      <h3>Termo de consentimento</h3>
+      <p>Ao aceitar, declaro que li e compreendi os acordos acima, tive a oportunidade de esclarecer minhas dúvidas e concordo em participar do acompanhamento e em utilizar a plataforma ${esc(APP)}, autorizando o registro e o uso dos meus dados para essa finalidade.</p>`;
+  }
+
+  // Situação do termo: sem condições, pendente, condições alteradas ou aceito
+  function termsState(t, cs) {
+    if (!t) return { key: 'none', label: 'Não definido', cls: 'pending' };
+    if (cs && cs.version === t.version) return { key: 'ok', label: 'Aceito', cls: 'ok' };
+    if (cs) return { key: 'changed', label: 'Pendente', cls: 'pending' };
+    return { key: 'pending', label: 'Pendente', cls: 'pending' };
+  }
+
+  function termsCard(t, cs, opt) {
+    const s = termsState(t, cs);
+    const isT = opt && opt.therapist;
+    const meta = cs ? `<dl class="term-meta">
+        <div><dt>Assinado como</dt><dd>${esc(cs.full_name)}</dd></div>
+        <div><dt>Data e hora</dt><dd>${esc(fmtStamp(cs.accepted_at))}</dd></div>
+        <div><dt>Dispositivo</dt><dd>${esc(deviceName(cs.user_agent))}</dd></div>
+      </dl>` : '';
+    let body = '';
+    if (s.key === 'none') body = `<p class="muted small">${isT ? 'Defina as condições abaixo para o paciente poder ler e aceitar os acordos.' : 'Sua terapeuta ainda está preparando os seus acordos.'}</p>`;
+    else if (s.key === 'pending') body = `<p class="muted small">${isT ? 'O paciente verá o pedido de aceite na tela de Início.' : 'Leia e aceite os acordos para concluir.'}</p>`;
+    else if (s.key === 'changed') body = `<p class="consent-pending">As condições mudaram depois do último aceite (${esc(fmtDate(cs.accepted_at))}). ${isT ? 'O paciente precisa aceitar de novo.' : 'Leia e aceite a nova versão.'}</p>${meta}`;
+    else body = meta;
+    const actions = [];
+    if (!isT && t) actions.push(`<a class="btn ${s.key === 'ok' ? 'ghost ' : ''}sm" href="#/acordos">${icon('file', 18)}${s.key === 'ok' ? 'Ler os acordos' : 'Ler e aceitar'}</a>`);
+    if (isT && t) actions.push(`<a class="btn ghost sm" href="#/paciente/${opt.pid}/termo">${icon('file', 18)}Ver termo do paciente</a>`);
+    if (cs) actions.push(`<button type="button" class="btn ghost sm" id="receipt">${icon('check', 18)}${s.key === 'changed' ? 'Comprovante anterior' : 'Ver comprovante'}</button>`);
+    const cond = isT ? termsForm(t) : '';
     return `<section class="card">
       <h2>Termos</h2>
       <div class="term-row">
-        <div class="term-info"><strong>Acordos do processo</strong><span class="muted small">Versão: ${esc(versionLabel(cs ? cs.version : CONSENT_VERSION))}</span></div>
-        <span class="status ${cs ? 'ok' : 'pending'}">${cs ? icon('check', 16) + 'Aceito' : 'Pendente'}</span>
+        <div class="term-info"><strong>Acordos do processo</strong>${t ? `<span class="muted small">Versão: ${esc(termsLabel(t))}</span>` : ''}</div>
+        <span class="status ${s.cls}">${s.key === 'ok' ? icon('check', 16) : ''}${s.label}</span>
       </div>
-      ${cs ? `<dl class="term-meta">
-          <div><dt>Assinado como</dt><dd>${esc(cs.full_name)}</dd></div>
-          <div><dt>Data e hora</dt><dd>${esc(fmtStamp(cs.accepted_at))}</dd></div>
-          <div><dt>Dispositivo</dt><dd>${esc(deviceName(cs.user_agent))}</dd></div>
-        </dl>
-        <button type="button" class="btn ghost sm" id="receipt">${icon('file', 18)}Ver comprovante</button>`
-        : `<p class="muted small">${esc(pendingHint)}</p>`}
+      ${body}
+      ${actions.length ? `<div class="photo-actions">${actions.join('')}</div>` : ''}
+      ${cond}
     </section>`;
+  }
+
+  function termsForm(t) {
+    t = t || {};
+    const sel = (a, b) => (a === b ? ' selected' : '');
+    return `<details class="cond"${t.version ? '' : ' open'}>
+      <summary>${t.version ? 'Alterar condições' : 'Definir condições do paciente'}</summary>
+      <form id="tf" class="stack">
+        <div class="grid2">
+          ${field('tfee', 'Valor mensal (R$)', `<input id="tfee" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(t.monthly_fee ?? '')}" required>`)}
+          ${field('tday', 'Dia do pagamento', `<input id="tday" type="number" min="1" max="31" inputmode="numeric" value="${esc(t.payment_day ?? 15)}" required>`)}
+          ${field('tmethod', 'Forma de pagamento', `<input id="tmethod" type="text" value="${esc(t.payment_method || 'Pix')}" required>`)}
+          ${field('tfreq', 'Frequência', `<select id="tfreq">${Object.entries(FREQ).map(([k, v]) => `<option value="${k}"${sel(k, t.frequency || 'semanal')}>${v.label}</option>`).join('')}</select>`)}
+          ${field('tdur', 'Duração (minutos)', `<input id="tdur" type="number" min="15" max="240" step="5" inputmode="numeric" value="${esc(t.duration_min ?? 50)}" required>`)}
+          ${field('tfmt', 'Formato', `<select id="tfmt">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}"${sel(k, t.format || 'online')}>${v}</option>`).join('')}</select>`)}
+        </div>
+        ${t.version ? '<p class="muted small">Se você mudar alguma condição, o paciente será convidado a aceitar os acordos de novo. O aceite anterior fica no histórico.</p>' : ''}
+        <button class="btn sm" type="submit">Salvar condições</button>
+      </form>
+    </details>`;
+  }
+
+  function bindTermsForm(pid, after) {
+    const f = $('#tf');
+    if (!f) return;
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const row = {
+        patient_id: pid,
+        monthly_fee: Number($('#tfee').value),
+        payment_day: Number($('#tday').value),
+        payment_method: $('#tmethod').value.trim() || 'Pix',
+        frequency: $('#tfreq').value,
+        duration_min: Number($('#tdur').value),
+        format: $('#tfmt').value
+      };
+      if (!(row.monthly_fee >= 0) || !(row.payment_day >= 1 && row.payment_day <= 31)) return toast('Confira o valor e o dia do pagamento.', true);
+      try { await q(sb.from('patient_terms').upsert(row)); toast('Condições salvas.'); after(); } catch (err) { /* toast */ }
+    });
   }
   function bindReceipt(cs, p) {
     const b = $('#receipt');
@@ -218,13 +331,18 @@
           .ua{font-size:12px;color:#4C5852;word-break:break-all}
           .foot{margin-top:28px;font-size:12px;color:#4C5852}
           button{margin-top:24px;padding:12px 20px;border:none;border-radius:10px;background:#2F6B5E;color:#fff;font:inherit;font-weight:600;cursor:pointer}
-          @media print{button{display:none} body{margin:0 auto}}
+          .terms{border:1px solid #E1E7E3;border-radius:12px;padding:8px 20px 16px;margin-top:12px;font-size:14px}
+          .terms h3{font-size:15px;color:#2F6B5E;margin:18px 0 6px} .terms ul{padding-left:20px;margin:6px 0} .terms li{margin:4px 0}
+          .terms-alert{background:#F6E7CC;border-radius:8px;padding:10px 12px}
+          h2{font-size:17px;margin:28px 0 4px}
+          @media print{button{display:none} body{margin:0 auto} .terms{page-break-before:always}}
         </style></head><body>
         <div class="top"><div class="logo">${icon('leaf', 24)}</div><div><h1>Comprovante de aceite eletrônico</h1><p class="sub">${esc(APP)}${cfg.CLINIC_NAME ? ' · ' + esc(cfg.CLINIC_NAME) : ''}</p></div></div>
         <p class="stamp">✓ O documento “Acordos do processo” foi aceito eletronicamente pelo(a) paciente abaixo.</p>
         <table>
           <tr><td>Documento</td><td>Acordos do processo — combinados do acompanhamento e termo de consentimento</td></tr>
-          <tr><td>Versão</td><td>${esc(versionLabel(cs.version))}</td></tr>
+          <tr><td>Versão</td><td>${esc(termsLabel(cs.terms, cs.version))}</td></tr>
+          ${cs.terms ? `<tr><td>Condições aceitas</td><td>${esc(brl(cs.terms.monthly_fee))} por mês · ${esc(cs.terms.payment_method)}, dia ${esc(cs.terms.payment_day)}<br>${esc((FREQ[cs.terms.frequency] || FREQ.semanal).label)}, ${esc(cs.terms.duration_min)} min · ${esc(FORMATS[cs.terms.format] || cs.terms.format)}</td></tr>` : ''}
           <tr><td>Paciente</td><td>${esc(p.full_name || '')}</td></tr>
           <tr><td>E-mail da conta</td><td>${esc(p.email || '')}</td></tr>
           <tr><td>Assinado como</td><td>${esc(cs.full_name)}</td></tr>
@@ -235,6 +353,7 @@
         <p>Declaração aceita: “Li e concordo com os Acordos do processo”, confirmada com a digitação do nome completo, após login com e-mail e senha pessoais.</p>
         <p class="foot">Comprovante gerado em ${esc(fmtStamp(new Date()))}. O registro original é imutável: não pode ser alterado nem apagado pelo paciente.</p>
         <button onclick="window.print()">Salvar em PDF / imprimir</button>
+        ${cs.terms ? `<h2>Texto aceito</h2><div class="terms">${termsBody(cs.terms)}</div>` : ''}
         </body></html>`);
       w.document.close();
     });
@@ -348,7 +467,14 @@
     loading();
     const urls = await avatarUrls([me.avatar_path]);
     const isT = me.role === 'therapist';
-    const myCs = isT ? null : (await q(sb.from('consents').select('*').eq('patient_id', me.id).eq('version', CONSENT_VERSION).limit(1)))[0];
+    let myT = null, myCs = null;
+    if (!isT) {
+      const [tt, cc] = await Promise.all([
+        q(sb.from('patient_terms').select('*').eq('patient_id', me.id).maybeSingle()),
+        q(sb.from('consents').select('*').eq('patient_id', me.id).order('accepted_at', { ascending: false }).limit(1))
+      ]);
+      myT = tt; myCs = cc[0] || null;
+    }
     shell(`${header('Conta', me.email)}
       ${recovering ? '<section class="card"><p><strong>Crie sua nova senha abaixo.</strong></p></section>' : ''}
       <section class="card">
@@ -359,7 +485,7 @@
               <input id="mname" type="text" value="${esc(me.full_name || '')}" placeholder="Seu nome" required><button class="btn sm" type="submit">Salvar nome</button></form>`
           : `<p><strong>${esc(me.full_name || '—')}</strong></p><p class="muted small">Para corrigir seu nome, fale com sua terapeuta.</p>`}
       </section>
-      ${isT ? '' : termsCard(myCs, 'Você pode ler e aceitar os acordos na tela de Início.')}
+      ${isT ? '' : termsCard(myT, myCs, { therapist: false })}
       <section class="card">
         <form id="pw" class="stack">
           <h2>Alterar senha</h2>
@@ -395,27 +521,22 @@
   async function viewHome() {
     loading();
     const since = new Date(Date.now() - 42 * DAY).toISOString();
-    const [phases, unlocks, goals, diary, latest, therapists, consent, acordos] = await Promise.all([
+    const [phases, unlocks, goals, diary, latest, therapists, terms, lastConsent] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
       q(sb.from('goals').select('*').eq('patient_id', me.id).order('created_at')),
       q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', me.id).gte('created_at', since)),
       q(sb.from('contents').select('id,title,kind').order('created_at', { ascending: false }).limit(1)),
       q(sb.from('profiles').select('id,full_name,avatar_path').eq('role', 'therapist').limit(1)),
-      q(sb.from('consents').select('accepted_at').eq('patient_id', me.id).eq('version', CONSENT_VERSION).limit(1)),
-      q(sb.from('contents').select('id').ilike('title', '%acordos%').order('created_at', { ascending: false }).limit(1))
+      q(sb.from('patient_terms').select('*').eq('patient_id', me.id).maybeSingle()),
+      q(sb.from('consents').select('version,accepted_at').eq('patient_id', me.id).order('accepted_at', { ascending: false }).limit(1))
     ]);
-    const needsConsent = !consent.length;
-    const consentCard = needsConsent ? `<section class="card consent">
-        <span class="kicker-amber">ANTES DE COMEÇAR</span>
-        <h2>Leia e aceite os Acordos do processo</h2>
+    const tState = termsState(terms, lastConsent[0]);
+    const consentCard = (tState.key === 'pending' || tState.key === 'changed') ? `<section class="card consent">
+        <span class="kicker-amber">${tState.key === 'changed' ? 'ACORDOS ATUALIZADOS' : 'ANTES DE COMEÇAR'}</span>
+        <h2>${tState.key === 'changed' ? 'Seus acordos foram atualizados' : 'Leia e aceite os Acordos do processo'}</h2>
         <p class="muted">São os combinados sobre sessões, sigilo, pagamento e uso dos seus dados.</p>
-        ${acordos[0] ? `<a class="btn ghost" href="#/conteudo/${acordos[0].id}">${icon('file', 20)}Ler os acordos</a>` : ''}
-        <form id="cform" class="stack">
-          <label class="check-line"><input type="checkbox" id="cok" required> Li e concordo com os Acordos do processo</label>
-          ${field('cname', 'Digite seu nome completo para assinar', `<input id="cname" type="text" autocomplete="name" value="" required>`)}
-          <button class="btn" type="submit">Aceitar e assinar</button>
-        </form>
+        <a class="btn" href="#/acordos">${icon('file', 20)}Ler e aceitar os acordos</a>
       </section>` : '';
     const ther = therapists[0];
     const urls = await avatarUrls([me.avatar_path, ther && ther.avatar_path]);
@@ -461,7 +582,38 @@
         <span><span class="kicker-amber">CONTEÚDO MAIS RECENTE</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
       ${ther ? `<section class="card profile-row">${avatarHtml(ther, urls)}<div><p class="muted small">Sua terapeuta</p><strong>${esc(ther.full_name || '')}</strong></div></section>` : ''}`, 'inicio');
     bindChecks('data-goal', 'goals');
-    if (needsConsent) $('#cform').addEventListener('submit', async (e) => {
+  }
+
+  // Acordos do processo do paciente: leitura e aceite
+  async function viewTerms() {
+    loading();
+    const [t, cons] = await Promise.all([
+      q(sb.from('patient_terms').select('*').eq('patient_id', me.id).maybeSingle()),
+      q(sb.from('consents').select('*').eq('patient_id', me.id).order('accepted_at', { ascending: false }).limit(1))
+    ]);
+    const cs = cons[0] || null;
+    const s = termsState(t, cs);
+    if (!t) {
+      shell(`<a class="back-l" href="#/inicio">${icon('back', 18)}Início</a>${header('Acordos do processo', '')}
+        <section class="card"><p>Sua terapeuta ainda está preparando os seus acordos. Assim que estiverem prontos, eles aparecerão aqui.</p></section>`, 'inicio');
+      return;
+    }
+    shell(`<a class="back-l" href="#/inicio">${icon('back', 18)}Início</a>
+      ${header('Acordos do processo', 'Versão: ' + termsLabel(t))}
+      <article class="card terms">${termsBody(t)}</article>
+      ${s.key === 'ok'
+        ? `<section class="card"><p class="consent-ok">${icon('check', 18)}<span>Você aceitou estes acordos em ${esc(fmtStamp(cs.accepted_at))}, assinando como “${esc(cs.full_name)}”.</span></p>
+            <button type="button" class="btn ghost sm" id="receipt">${icon('check', 18)}Ver comprovante</button></section>`
+        : `<section class="card consent">
+            <h2>Aceitar os acordos</h2>
+            <form id="cform" class="stack">
+              <label class="check-line"><input type="checkbox" id="cok"> Li e concordo com os Acordos do processo</label>
+              ${field('cname', 'Digite seu nome completo para assinar', '<input id="cname" type="text" autocomplete="name" required>')}
+              <button class="btn" type="submit">Aceitar e assinar</button>
+            </form>
+          </section>`}`, 'inicio');
+    bindReceipt(cs, me);
+    if ($('#cform')) $('#cform').addEventListener('submit', async (e) => {
       e.preventDefault();
       const full_name = $('#cname').value.trim();
       if (!$('#cok').checked) return toast('Marque que você leu e concorda.', true);
@@ -469,9 +621,10 @@
       const btn = $('#cform button[type=submit]');
       btn.disabled = true;
       try {
-        await q(sb.from('consents').insert({ patient_id: me.id, version: CONSENT_VERSION, full_name, user_agent: navigator.userAgent.slice(0, 300) }));
+        // versão, data e condições são gravadas pelo servidor
+        await q(sb.from('consents').insert({ patient_id: me.id, version: 'servidor', full_name, user_agent: navigator.userAgent.slice(0, 300) }));
         toast('Acordos aceitos. Obrigada!');
-        viewHome();
+        viewTerms();
       } catch (err) { btn.disabled = false; }
     });
   }
@@ -630,13 +783,19 @@
   async function viewPatients() {
     loading();
     const since = new Date(Date.now() - 30 * DAY).toISOString();
-    const [patients, unlocks, phases, diary, sessions] = await Promise.all([
+    const [patients, unlocks, phases, diary, sessions, allTerms, allConsents] = await Promise.all([
       q(sb.from('profiles').select('*').eq('role', 'patient').order('full_name')),
       q(sb.from('phase_unlocks').select('patient_id,phase_id')),
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('diary_entries').select('patient_id,created_at').gte('created_at', since).order('created_at', { ascending: false })),
-      q(sb.from('sessions').select('patient_id,created_at').order('created_at', { ascending: false }).limit(2000))
+      q(sb.from('sessions').select('patient_id,created_at').order('created_at', { ascending: false }).limit(2000)),
+      q(sb.from('patient_terms').select('patient_id,version')),
+      q(sb.from('consents').select('patient_id,version'))
     ]);
+    const termVer = Object.fromEntries(allTerms.map((t) => [t.patient_id, t.version]));
+    const accepted = new Set(allConsents.map((c) => c.patient_id + '|' + c.version));
+    const termBadge = (pid) => !termVer[pid] ? '<span class="badge">Definir termo</span>'
+      : !accepted.has(pid + '|' + termVer[pid]) ? '<span class="badge">Termo pendente</span>' : '';
     const phaseById = Object.fromEntries(phases.map((p) => [p.id, p]));
     const lastDiary = {}, lastSession = {};
     diary.forEach((d) => { if (!lastDiary[d.patient_id]) lastDiary[d.patient_id] = d.created_at; });
@@ -651,7 +810,7 @@
       return `<a class="item" href="#/paciente/${p.id}" data-name="${esc((p.full_name || '').toLowerCase() + ' ' + (p.email || '').toLowerCase())}">
         ${avatarHtml(p, urls)}
         <span class="item-body"><strong>${esc(p.full_name || p.email)}</strong><span class="muted small">${ph ? `Fase ${ph.position} · ${esc(ph.name)}` : 'Nenhuma fase liberada'}</span></span>
-        ${hasNew(p.id) ? '<span class="badge">Diário novo</span>' : ''}</a>`;
+        <span class="badges">${hasNew(p.id) ? '<span class="badge">Diário novo</span>' : ''}${termBadge(p.id)}</span></a>`;
     };
 
     shell(`${darkHeader('Painel da terapeuta', 'Pacientes', '', null,
@@ -693,8 +852,11 @@
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const urls = await avatarUrls([p.avatar_path]);
-    const consents = await q(sb.from('consents').select('*').eq('patient_id', pid).eq('version', CONSENT_VERSION).limit(1));
-    const cs = consents[0];
+    const [pterms, consents] = await Promise.all([
+      q(sb.from('patient_terms').select('*').eq('patient_id', pid).maybeSingle()),
+      q(sb.from('consents').select('*').eq('patient_id', pid).order('accepted_at', { ascending: false }).limit(1))
+    ]);
+    const cs = consents[0] || null;
     const [myAssigns, personalAll] = await Promise.all([
       q(sb.from('content_patients').select('content_id').eq('patient_id', pid)),
       q(sb.from('contents').select('id,title,phase_id,respect_phase').eq('audience', 'selected').order('title'))
@@ -730,7 +892,7 @@
         <form id="nf" class="inline"><label class="sr" for="pname">Nome do paciente</label>
           <input id="pname" type="text" value="${esc(p.full_name || '')}" placeholder="Nome completo"><button class="btn sm ghost" type="submit">Salvar nome</button></form>
       </section>
-      ${termsCard(cs, 'O paciente verá o pedido de aceite na tela de Início.')}
+      ${termsCard(pterms, cs, { therapist: true, pid })}
       <section class="card" style="gap:4px">
         <h2 style="margin-bottom:6px">Fases da jornada</h2>
         ${phases.map((ph) => { const on = unlocked.has(ph.id); return `<div class="phase-row"><div><strong style="font-size:15px">${ph.position} · ${esc(ph.name)}</strong>
@@ -752,6 +914,7 @@
 
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     bindReceipt(cs, p);
+    bindTermsForm(pid, () => viewPatient(pid));
     if ($('#assignf')) $('#assignf').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await q(sb.from('content_patients').insert({ content_id: $('#assignsel').value, patient_id: pid })); toast('Conteúdo adicionado para o paciente.'); viewPatient(pid); } catch (err) { /* toast */ }
@@ -799,6 +962,21 @@
         viewPatient(pid);
       } catch (err) { /* toast */ }
     }));
+  }
+
+  // Terapeuta: ver o termo exatamente como o paciente vê
+  async function viewPatientTerms(pid) {
+    loading();
+    const [p, t] = await Promise.all([
+      q(sb.from('profiles').select('id,full_name,email').eq('id', pid).maybeSingle()),
+      q(sb.from('patient_terms').select('*').eq('patient_id', pid).maybeSingle())
+    ]);
+    if (!p) { go('#/pacientes'); return; }
+    shell(`${darkHeader('', 'Acordos do processo', p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
+      ${t ? `<p class="muted small">Versão: ${esc(termsLabel(t))}. É exatamente este texto que o paciente lê e aceita.</p>
+        <article class="card terms">${termsBody(t)}</article>`
+        : `<section class="card"><p>As condições deste paciente ainda não foram definidas. Defina-as no tópico <strong>Termos</strong> da ficha.</p>
+            <a class="btn sm" href="#/paciente/${pid}">Voltar à ficha</a></section>`}`, 'pacientes');
   }
 
   async function viewNewSession(pid) {
@@ -1082,11 +1260,13 @@
       if ((m = h.match(/^#\/conteudo\/([\w-]+)$/))) return await viewContent(m[1]);
       if (me.role === 'therapist') {
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
+        if ((m = h.match(/^#\/paciente\/([\w-]+)\/termo$/))) return await viewPatientTerms(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
         if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
         return await viewPatients();
       }
+      if (h === '#/acordos') return await viewTerms();
       if (h === '#/conteudos') return await viewContents();
       if (h === '#/diario') return await viewDiary();
       if (h === '#/sessoes') return await viewSessions();
