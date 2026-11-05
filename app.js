@@ -174,7 +174,8 @@
         <style>
           body{font-family:Inter,system-ui,sans-serif;color:#1F2A24;max-width:720px;margin:40px auto;padding:0 24px;line-height:1.55}
           .top{display:flex;align-items:center;gap:14px;border-bottom:2px solid #2F6B5E;padding-bottom:16px;margin-bottom:24px}
-          .logo{width:44px;height:44px;border-radius:12px;background:#2F6B5E}
+          .logo{width:44px;height:44px;border-radius:12px;background:#2F6B5E;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+          *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
           h1{font-size:22px;margin:0} .sub{color:#4C5852;margin:2px 0 0;font-size:14px}
           table{width:100%;border-collapse:collapse;margin:20px 0}
           td{padding:10px 12px;border-bottom:1px solid #E1E7E3;vertical-align:top;font-size:15px}
@@ -185,7 +186,7 @@
           button{margin-top:24px;padding:12px 20px;border:none;border-radius:10px;background:#2F6B5E;color:#fff;font:inherit;font-weight:600;cursor:pointer}
           @media print{button{display:none} body{margin:0 auto}}
         </style></head><body>
-        <div class="top"><div class="logo"></div><div><h1>Comprovante de aceite eletrônico</h1><p class="sub">${esc(APP)}${cfg.CLINIC_NAME ? ' · ' + esc(cfg.CLINIC_NAME) : ''}</p></div></div>
+        <div class="top"><div class="logo">${icon('leaf', 24)}</div><div><h1>Comprovante de aceite eletrônico</h1><p class="sub">${esc(APP)}${cfg.CLINIC_NAME ? ' · ' + esc(cfg.CLINIC_NAME) : ''}</p></div></div>
         <p class="stamp">✓ O documento “Acordos do processo” foi aceito eletronicamente pelo(a) paciente abaixo.</p>
         <table>
           <tr><td>Documento</td><td>Acordos do processo — combinados do acompanhamento e termo de consentimento</td></tr>
