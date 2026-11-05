@@ -103,6 +103,17 @@ p { margin: 0; }
 .consent-ok svg { flex-shrink: 0; margin-top: 1px; }
 .consent-pending { background: var(--amber-bg); color: var(--amber); font-weight: 600; }
 
+.term-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.term-info { display: flex; flex-direction: column; }
+.status { display: inline-flex; align-items: center; gap: 4px; border-radius: 20px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.status.ok { background: var(--brand-l); color: var(--brand-d); }
+.status.pending { background: var(--amber-bg); color: var(--amber); }
+.term-meta { margin: 0; display: flex; flex-direction: column; gap: 6px; background: var(--bg); border-radius: 12px; padding: 12px 14px; }
+.term-meta div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.term-meta dt { color: var(--muted); }
+.term-meta dd { margin: 0; text-align: right; font-weight: 500; }
+.card .btn.sm { align-self: flex-start; }
+
 /* ---------- navegação inferior ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0;

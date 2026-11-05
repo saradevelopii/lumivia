@@ -133,6 +133,72 @@
     });
   }
 
+  /* ---------- termos: status e comprovante ---------- */
+  const fmtStamp = (d) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+  function deviceName(ua) {
+    ua = ua || '';
+    const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Outro sistema';
+    const br = /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
+    return `${br} · ${os}`;
+  }
+  function termsCard(cs, pendingHint) {
+    return `<section class="card">
+      <h2>Termos</h2>
+      <div class="term-row">
+        <div class="term-info"><strong>Acordos do processo</strong><span class="muted small">Versão ${esc(CONSENT_VERSION)}</span></div>
+        <span class="status ${cs ? 'ok' : 'pending'}">${cs ? icon('check', 16) + 'Aceito' : 'Pendente'}</span>
+      </div>
+      ${cs ? `<dl class="term-meta">
+          <div><dt>Assinado como</dt><dd>${esc(cs.full_name)}</dd></div>
+          <div><dt>Data e hora</dt><dd>${esc(fmtStamp(cs.accepted_at))}</dd></div>
+          <div><dt>Dispositivo</dt><dd>${esc(deviceName(cs.user_agent))}</dd></div>
+        </dl>
+        <button type="button" class="btn ghost sm" id="receipt">${icon('file', 18)}Ver comprovante</button>`
+        : `<p class="muted small">${esc(pendingHint)}</p>`}
+    </section>`;
+  }
+  function bindReceipt(cs, p) {
+    const b = $('#receipt');
+    if (!b || !cs) return;
+    b.addEventListener('click', () => {
+      const w = window.open('', '_blank');
+      if (!w) return toast('Permita pop-ups para este site para abrir o comprovante.', true);
+      w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Comprovante de aceite — ${esc(cs.full_name)}</title>
+        <style>
+          body{font-family:Inter,system-ui,sans-serif;color:#1F2A24;max-width:720px;margin:40px auto;padding:0 24px;line-height:1.55}
+          .top{display:flex;align-items:center;gap:14px;border-bottom:2px solid #2F6B5E;padding-bottom:16px;margin-bottom:24px}
+          .logo{width:44px;height:44px;border-radius:12px;background:#2F6B5E}
+          h1{font-size:22px;margin:0} .sub{color:#4C5852;margin:2px 0 0;font-size:14px}
+          table{width:100%;border-collapse:collapse;margin:20px 0}
+          td{padding:10px 12px;border-bottom:1px solid #E1E7E3;vertical-align:top;font-size:15px}
+          td:first-child{color:#4C5852;width:38%;font-weight:600}
+          .stamp{background:#D5E3DD;color:#1F4D43;border-radius:10px;padding:14px 16px;font-weight:600}
+          .ua{font-size:12px;color:#4C5852;word-break:break-all}
+          .foot{margin-top:28px;font-size:12px;color:#4C5852}
+          button{margin-top:24px;padding:12px 20px;border:none;border-radius:10px;background:#2F6B5E;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+          @media print{button{display:none} body{margin:0 auto}}
+        </style></head><body>
+        <div class="top"><div class="logo"></div><div><h1>Comprovante de aceite eletrônico</h1><p class="sub">${esc(APP)}${cfg.CLINIC_NAME ? ' · ' + esc(cfg.CLINIC_NAME) : ''}</p></div></div>
+        <p class="stamp">✓ O documento “Acordos do processo” foi aceito eletronicamente pelo(a) paciente abaixo.</p>
+        <table>
+          <tr><td>Documento</td><td>Acordos do processo — combinados do acompanhamento e termo de consentimento</td></tr>
+          <tr><td>Versão</td><td>${esc(cs.version)}</td></tr>
+          <tr><td>Paciente</td><td>${esc(p.full_name || '')}</td></tr>
+          <tr><td>E-mail da conta</td><td>${esc(p.email || '')}</td></tr>
+          <tr><td>Assinado como</td><td>${esc(cs.full_name)}</td></tr>
+          <tr><td>Data e hora do aceite</td><td>${esc(fmtStamp(cs.accepted_at))}<br><span class="ua">Horário registrado pelo servidor (UTC: ${esc(new Date(cs.accepted_at).toISOString())})</span></td></tr>
+          <tr><td>Dispositivo</td><td>${esc(deviceName(cs.user_agent))}<br><span class="ua">${esc(cs.user_agent || '')}</span></td></tr>
+          <tr><td>Código do registro</td><td><span class="ua">${esc(cs.id)}</span></td></tr>
+        </table>
+        <p>Declaração aceita: “Li e concordo com os Acordos do processo”, confirmada com a digitação do nome completo, após login com e-mail e senha pessoais.</p>
+        <p class="foot">Comprovante gerado em ${esc(fmtStamp(new Date()))}. O registro original é imutável: não pode ser alterado nem apagado pelo paciente.</p>
+        <button onclick="window.print()">Salvar em PDF / imprimir</button>
+        </body></html>`);
+      w.document.close();
+    });
+  }
+
   async function upload(path, file) {
     const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
     if (error) { toast(traduzErro(error.message), true); throw error; }
@@ -237,6 +303,7 @@
     loading();
     const urls = await avatarUrls([me.avatar_path]);
     const isT = me.role === 'therapist';
+    const myCs = isT ? null : (await q(sb.from('consents').select('*').eq('patient_id', me.id).eq('version', CONSENT_VERSION).limit(1)))[0];
     shell(`${header('Conta', me.email)}
       ${recovering ? '<section class="card"><p><strong>Crie sua nova senha abaixo.</strong></p></section>' : ''}
       <section class="card">
@@ -247,6 +314,7 @@
               <input id="mname" type="text" value="${esc(me.full_name || '')}" placeholder="Seu nome" required><button class="btn sm" type="submit">Salvar nome</button></form>`
           : `<p><strong>${esc(me.full_name || '—')}</strong></p><p class="muted small">Para corrigir seu nome, fale com sua terapeuta.</p>`}
       </section>
+      ${isT ? '' : termsCard(myCs, 'Você pode ler e aceitar os acordos na tela de Início.')}
       <section class="card">
         <form id="pw" class="stack">
           <h2>Alterar senha</h2>
@@ -269,6 +337,7 @@
     });
     $('#sair').addEventListener('click', () => sb.auth.signOut());
     bindPhoto('myphoto', me.id, me.avatar_path, async () => { await loadMe(); viewAccount(); });
+    bindReceipt(myCs, me);
     if ($('#myname')) $('#myname').addEventListener('submit', async (e) => {
       e.preventDefault();
       const full_name = $('#mname').value.trim();
@@ -578,9 +647,6 @@
     const urls = await avatarUrls([p.avatar_path]);
     const consents = await q(sb.from('consents').select('*').eq('patient_id', pid).eq('version', CONSENT_VERSION).limit(1));
     const cs = consents[0];
-    const consentLine = cs
-      ? `<p class="consent-ok">${icon('check', 18)}<span>Acordos aceitos em ${esc(new Date(cs.accepted_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }))}, assinado como “${esc(cs.full_name)}”</span></p>`
-      : `<p class="consent-pending">Acordos do processo ainda não aceitos pelo paciente</p>`;
 
     const listRows = (items, table, label) => `${items.length ? `<ul class="rows">${items.map((it) => `<li><span class="${it.done ? 'done' : ''}">${esc(it.title)}</span>
         <button type="button" class="icon-btn" data-del="${table}:${it.id}" aria-label="Remover ${label}: ${esc(it.title)}">${icon('trash', 18)}</button></li>`).join('')}</ul>` : `<p class="muted small">Nenhuma ${label} ainda.</p>`}
@@ -592,10 +658,10 @@
       <section class="card">
         <h2>Perfil do paciente</h2>
         <div class="profile-row">${avatarHtml(p, urls, 'lg')}${photoControls('pphoto', !!p.avatar_path)}</div>
-        ${consentLine}
         <form id="nf" class="inline"><label class="sr" for="pname">Nome do paciente</label>
           <input id="pname" type="text" value="${esc(p.full_name || '')}" placeholder="Nome completo"><button class="btn sm ghost" type="submit">Salvar nome</button></form>
       </section>
+      ${termsCard(cs, 'O paciente verá o pedido de aceite na tela de Início.')}
       <section class="card" style="gap:4px">
         <h2 style="margin-bottom:6px">Fases da jornada</h2>
         ${phases.map((ph) => { const on = unlocked.has(ph.id); return `<div class="phase-row"><div><strong style="font-size:15px">${ph.position} · ${esc(ph.name)}</strong>
@@ -615,6 +681,7 @@
         : '<p class="muted">Nenhuma sessão registrada.</p>'}`, 'pacientes');
 
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
+    bindReceipt(cs, p);
     $('#nf').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await q(sb.from('profiles').update({ full_name: $('#pname').value.trim() || null }).eq('id', pid)); toast('Nome salvo.'); viewPatient(pid); } catch (err) { /* toast */ }
