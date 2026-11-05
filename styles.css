@@ -330,3 +330,33 @@ details.card[open] > summary::after { content: "–"; }
 .wheel-hl { background: #E9E2F1; }
 .wheel-hl .hl-ico { color: #7E57A0; }
 .wheel-hl .kicker-amber { color: #5E3F7A; }
+
+/* ---------- relatório da roda ---------- */
+.report-head h2 { font-family: Outfit, sans-serif; font-size: 22px; }
+.report-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.report-kpis div { background: var(--bg); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; }
+.report-kpis strong { font-family: Outfit, sans-serif; font-size: 26px; }
+.report-kpis span { font-size: 12px; color: var(--muted); }
+.group-bars { display: flex; flex-direction: column; gap: 8px; }
+.group-bars > div { display: grid; grid-template-columns: 130px 1fr 36px; gap: 10px; align-items: center; font-size: 14px; }
+.group-bars .gb { height: 10px; background: var(--soft); border-radius: 6px; overflow: hidden; }
+.group-bars .gb i { display: block; height: 100%; border-radius: 6px; }
+.group-bars b { text-align: right; }
+.report-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.report-list b { display: inline-block; min-width: 30px; font-family: Outfit, sans-serif; }
+.quote { margin: 0; padding: 10px 14px; border-left: 4px solid var(--brand-l); color: #3E4A44; font-style: italic; white-space: pre-wrap; }
+.pnl-area { border-top: 1px solid #EEF1EE; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.pnl-area h3 { margin: 0; font-size: 15px; }
+.pnl-area p { font-size: 15px; }
+.report-q { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.up-t { color: var(--brand); } .down-t { color: var(--danger); }
+
+@media print {
+  .nav, .no-print, .back, .toast { display: none !important; }
+  body { background: #fff; }
+  .page { padding: 0; max-width: none; }
+  .hd-dark { margin: 0; border-radius: 0; background: #fff; color: var(--ink); border-bottom: 2px solid var(--brand); }
+  .hd-dark p { color: var(--muted); }
+  .card { break-inside: avoid; border: 1px solid #E1E7E3; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

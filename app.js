@@ -646,6 +646,164 @@
     if (last) showResult(); else showForm();
   }
 
+  /* ---------- Relatório da Roda da Vida (só para a terapeuta) ---------- */
+  // Biblioteca de estratégias de PNL por área: apoio à leitura da terapeuta, não prescrição.
+  const PNL = {
+    saude: [
+      ['Ponte ao futuro', 'Conduza o paciente a se ver daqui a 3 meses com a nova rotina (sono, alimentação, movimento), explorando o que vê, ouve e sente. Use para reforçar a motivação antes de definir hábitos.'],
+      ['Swish de hábitos', 'Troque a imagem do gatilho do hábito atual (ex.: celular antes de dormir) pela imagem do novo comportamento desejado, repetindo o padrão de forma rápida.']
+    ],
+    intelecto: [
+      ['Modelagem', 'Identifique alguém que o paciente admira por aprender com facilidade e explore estratégias, crenças e rotinas dessa pessoa que ele possa adaptar.'],
+      ['Ancoragem de estado de aprendizagem', 'Resgate uma memória de curiosidade e entusiasmo ao aprender algo e ancore esse estado para acessá-lo antes de estudar.']
+    ],
+    emocional: [
+      ['Ancoragem de recursos', 'Identifique estados de calma e segurança já vividos e crie uma âncora (toque, palavra ou imagem) para acessá-los em momentos de tensão.'],
+      ['Ressignificação', 'Trabalhe uma situação que gera sofrimento buscando outro significado (de sentido) ou outro contexto em que aquele comportamento seja útil (de contexto).']
+    ],
+    proposito: [
+      ['Níveis neurológicos (Dilts)', 'Percorra ambiente, comportamento, capacidades, crenças e valores, identidade e propósito para entender em que nível está o desalinhamento com o trabalho.'],
+      ['Objetivo bem formulado', 'Transforme a insatisfação em um objetivo positivo, específico, sob controle do paciente, com evidências de sucesso e checagem ecológica.']
+    ],
+    financas: [
+      ['Metamodelo de linguagem', 'Escute generalizações e crenças sobre dinheiro (“nunca sobra”, “dinheiro é difícil”) e questione: sempre? quem disse? o que especificamente?'],
+      ['Objetivo bem formulado', 'Defina uma meta financeira concreta, com prazo, primeiro passo e evidência sensorial de como será quando alcançada.']
+    ],
+    contribuicao: [
+      ['Níveis neurológicos: missão', 'Explore o nível além da identidade: “para quem e para quê eu faço o que faço?”. Ajuda a encontrar formas de contribuição coerentes com os valores.'],
+      ['Linha do tempo', 'Peça que o paciente se veja no futuro olhando para trás: que legado gostaria de ter deixado? Traga essas respostas para ações no presente.']
+    ],
+    familia: [
+      ['Posições perceptivas', 'Revise um conflito familiar pela 1ª posição (eu), 2ª (o outro) e 3ª (observador neutro), ampliando a compreensão e as opções de resposta.'],
+      ['Ressignificação de contexto', 'Explore em que contexto o comportamento do familiar que incomoda poderia ter uma intenção positiva ou ser útil.']
+    ],
+    amor: [
+      ['Posições perceptivas', 'Use a 2ª posição para o paciente experimentar a perspectiva do par (ou de relações passadas) e a 3ª para observar padrões da relação.'],
+      ['Crenças e metamodelo', 'Identifique crenças sobre merecimento e relacionamento (“sempre acabo sozinha(o)”) e questione generalizações e leituras mentais.']
+    ],
+    social: [
+      ['Rapport e calibração', 'Trabalhe habilidades de conexão: espelhamento sutil, escuta ativa e calibração das respostas do outro em situações sociais.'],
+      ['Ensaio mental com ponte ao futuro', 'Ensaie mentalmente um encontro social desejado, com o estado de recurso ancorado, até que a cena fique confortável.']
+    ],
+    diversao: [
+      ['Submodalidades', 'Compare como o paciente representa algo prazeroso e algo “obrigatório”; ajuste brilho, tamanho e distância para tornar o lazer mais atraente.'],
+      ['Ancoragem de estado de prazer', 'Resgate momentos de leveza e diversão genuína e ancore esse estado; depois planeje pequenas pausas reais na semana.']
+    ],
+    felicidade: [
+      ['Ponte ao futuro', 'Explore como seria um dia comum com mais plenitude: o que estaria diferente? Identifique os elementos que já são possíveis agora.'],
+      ['Valores e critérios', 'Elicie os valores mais importantes do paciente e verifique quais estão sendo honrados no dia a dia e quais estão ausentes.']
+    ],
+    espiritualidade: [
+      ['Níveis neurológicos: espiritual', 'Explore o que dá sentido e conexão com algo maior (fé, natureza, propósito, comunidade), sem impor crenças.'],
+      ['Ancoragem de presença', 'Resgate momentos de paz e conexão profunda e ancore esse estado para práticas breves de presença no dia a dia.']
+    ]
+  };
+  const SESSION_QUESTIONS = [
+    'O que, especificamente, faria essa nota subir um ponto?',
+    'Como você vai saber que chegou lá? O que vai ver, ouvir e sentir?',
+    'O que te impede hoje? E o que já está a seu favor?',
+    'Quando essa área esteve melhor, o que era diferente?',
+    'Qual é o primeiro passo pequeno que depende só de você?',
+    'Se essa área melhorar, o que muda nas outras áreas da sua vida?'
+  ];
+
+  function wheelReportHtml(entry, prev, p) {
+    const sc = (k) => Number(entry.scores[k] ?? 0);
+    const f1 = (n) => (Math.round(n * 10) / 10).toFixed(1).replace('.', ',');
+    const vals = WHEEL_AREAS.map((a) => ({ ...a, v: sc(a.key) }));
+    const avg = vals.reduce((s, a) => s + a.v, 0) / vals.length;
+    const sorted = [...vals].sort((a, b) => a.v - b.v);
+    const low = sorted[0], high = sorted[sorted.length - 1];
+    const range = high.v - low.v;
+    const balance = range <= 3 ? ['equilibrada', 'As notas estão próximas entre si. O trabalho pode focar em elevar o nível geral ou em uma área de interesse.']
+      : range <= 6 ? ['moderadamente desequilibrada', 'Há diferença relevante entre as áreas. Vale explorar como as áreas fortes podem apoiar as mais baixas.']
+      : ['desequilibrada', 'Há grande distância entre as áreas. Investigue se a área mais alta está “compensando” as outras e o custo disso.'];
+    const groupAvg = WHEEL_GROUPS.map((g) => {
+      const a = vals.filter((x) => x.group === g.key);
+      return { ...g, avg: a.reduce((s, x) => s + x.v, 0) / a.length };
+    });
+    const attention = sorted.filter((a) => a.v <= 4);
+    const strengths = [...sorted].reverse().filter((a) => a.v >= 8);
+    const focus = entry.focus ? vals.find((a) => a.key === entry.focus) : null;
+    const lowest3 = sorted.slice(0, 3).map((a) => a.key);
+    let focusInsight = '';
+    if (!focus) focusInsight = 'O paciente não escolheu uma área prioritária. Pode ser útil explorar na sessão o que dificulta essa escolha.';
+    else if (focus.key === low.key) focusInsight = `O foco escolhido (${focus.label}, nota ${focus.v}) coincide com a menor nota: há coerência entre a percepção e a prioridade.`;
+    else if (lowest3.includes(focus.key)) focusInsight = `O foco escolhido (${focus.label}, nota ${focus.v}) está entre as três notas mais baixas: prioridade coerente com o resultado.`;
+    else focusInsight = `O paciente escolheu ${focus.label} (nota ${focus.v}), embora ${low.label} tenha a menor nota (${low.v}). Vale explorar os critérios dessa escolha: motivação “em direção a” algo desejado ou “afastamento” de algo difícil de encarar (metaprograma de direção).`;
+    const alerts = [];
+    if (sc('emocional') <= 2 || sc('felicidade') <= 2) alerts.push('Notas muito baixas em Equilíbrio emocional ou Plenitude e felicidade merecem atenção cuidadosa. Avalie se há necessidade de encaminhamento para acompanhamento psicológico ou psiquiátrico.');
+    if (avg <= 3) alerts.push('A média geral está muito baixa. Acolha antes de propor metas e investigue o momento de vida do paciente.');
+    let evolution = '';
+    if (prev) {
+      const diffs = WHEEL_AREAS.map((a) => ({ ...a, d: sc(a.key) - Number(prev.scores[a.key] ?? 0) })).filter((x) => x.d !== 0).sort((a, b) => b.d - a.d);
+      const ups = diffs.filter((x) => x.d > 0), downs = diffs.filter((x) => x.d < 0).reverse();
+      const prevAvg = WHEEL_AREAS.reduce((s, a) => s + Number(prev.scores[a.key] ?? 0), 0) / WHEEL_AREAS.length;
+      const dAvg = Math.round(avg * 10) / 10 - Math.round(prevAvg * 10) / 10;
+      evolution = `<section class="card"><h2>Evolução desde ${esc(fmtDate(prev.created_at))}</h2>
+        <p>Média geral: <strong>${f1(prevAvg)}</strong> → <strong>${f1(avg)}</strong> (${dAvg >= 0 ? '+' : ''}${f1(dAvg)}).</p>
+        ${ups.length ? `<p><strong class="up-t">Subiram:</strong> ${ups.map((x) => `${esc(x.label)} (+${x.d})`).join(', ')}.</p>` : ''}
+        ${downs.length ? `<p><strong class="down-t">Caíram:</strong> ${downs.map((x) => `${esc(x.label)} (${x.d})`).join(', ')}.</p>` : ''}
+        ${downs.some((x) => x.d <= -2) ? '<p class="consent-pending">Há queda de 2 pontos ou mais em alguma área. Investigue o que aconteceu nesse período.</p>' : ''}
+        ${!diffs.length ? '<p>Nenhuma nota mudou.</p>' : ''}
+      </section>`;
+    }
+    const pnlAreas = [];
+    if (focus) pnlAreas.push(focus);
+    sorted.forEach((a) => { if (pnlAreas.length < 3 && !pnlAreas.some((x) => x.key === a.key) && a.v <= 6) pnlAreas.push(a); });
+    return `
+      <section class="card report-head">
+        <p class="muted small">Relatório da Roda da Vida · somente para a terapeuta</p>
+        <h2>${esc(p.full_name || p.email)}</h2>
+        <p class="muted small">Preenchida em ${esc(fmtStamp(entry.created_at))}</p>
+      </section>
+      ${alerts.map((t) => `<p class="consent-pending">${esc(t)}</p>`).join('')}
+      <section class="card">${wheelSvg(entry.scores, prev && prev.scores)}${wheelLegend(prev && prev.created_at)}</section>
+      <section class="card"><h2>Visão geral</h2>
+        <div class="report-kpis">
+          <div><strong>${f1(avg)}</strong><span>média geral</span></div>
+          <div><strong>${high.v}</strong><span>maior: ${esc(high.short)}</span></div>
+          <div><strong>${low.v}</strong><span>menor: ${esc(low.short)}</span></div>
+        </div>
+        <p>A roda está <strong>${balance[0]}</strong> (diferença de ${range} pontos entre a maior e a menor nota). ${balance[1]}</p>
+        <div class="group-bars">${groupAvg.map((g) => `<div><span>${esc(g.label)}</span><div class="gb"><i style="width:${g.avg * 10}%;background:${g.color}"></i></div><b>${f1(g.avg)}</b></div>`).join('')}</div>
+      </section>
+      ${attention.length ? `<section class="card"><h2>Áreas de atenção (nota 4 ou menos)</h2><ul class="report-list">${attention.map((a) => `<li><b>${a.v}</b> ${esc(a.label)}</li>`).join('')}</ul></section>` : ''}
+      ${strengths.length ? `<section class="card"><h2>Pontos fortes (nota 8 ou mais)</h2><ul class="report-list">${strengths.map((a) => `<li><b>${a.v}</b> ${esc(a.label)}</li>`).join('')}</ul>
+        <p class="muted small">Recursos que podem ser transferidos para as áreas mais baixas: explore o que o paciente faz, pensa e sente nessas áreas e como levar isso para as demais (ancoragem e encadeamento de recursos).</p></section>` : ''}
+      <section class="card"><h2>Foco escolhido pelo paciente</h2><p>${esc(focusInsight)}</p>
+        ${entry.reflection ? `<blockquote class="quote">“${esc(entry.reflection)}”</blockquote>` : ''}</section>
+      ${evolution}
+      ${pnlAreas.length ? `<section class="card"><h2>Estratégias de PNL sugeridas</h2>
+        ${pnlAreas.map((a) => `<div class="pnl-area"><h3 style="color:${groupColor(a.group)}">${esc(a.label)} · nota ${a.v}${focus && a.key === focus.key ? ' · foco do paciente' : ''}</h3>
+          ${(PNL[a.key] || []).map(([n, d]) => `<p><strong>${esc(n)}:</strong> ${esc(d)}</p>`).join('')}</div>`).join('')}
+      </section>` : ''}
+      <section class="card"><h2>Perguntas para a próxima sessão</h2>
+        <p class="muted small">Baseadas na estrutura de objetivo bem formulado, aplicadas a ${esc(focus ? focus.label : low.label)}.</p>
+        <ol class="report-q">${SESSION_QUESTIONS.map((q) => `<li>${esc(q)}</li>`).join('')}</ol></section>
+      <p class="muted small">Relatório gerado automaticamente a partir das notas, como apoio à sua leitura. Não é diagnóstico e não substitui a sua avaliação profissional. Visível somente para você.</p>`;
+  }
+
+  async function viewWheelReport(pid, entryId) {
+    loading();
+    const [p, entries] = await Promise.all([
+      q(sb.from('profiles').select('id,full_name,email').eq('id', pid).maybeSingle()),
+      q(sb.from('wheel_entries').select('*').eq('patient_id', pid).order('created_at'))
+    ]);
+    if (!p || !entries.length) { go('#/paciente/' + pid); return; }
+    let idx = entries.findIndex((e) => e.id === entryId);
+    if (idx < 0) idx = entries.length - 1;
+    const entry = entries[idx], prev = idx > 0 ? entries[idx - 1] : null;
+    shell(`${darkHeader('', 'Relatório da Roda da Vida', p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
+      <div class="no-print stack">
+        ${entries.length > 1 ? field('wsel', 'Preenchimento', `<select id="wsel">${entries.map((e, i) => `<option value="${e.id}"${i === idx ? ' selected' : ''}>${esc(fmtDate(e.created_at))}${i === entries.length - 1 ? ' (mais recente)' : ''}</option>`).join('')}</select>`) : ''}
+        <button type="button" class="btn ghost sm" id="wprint">${icon('file', 18)}Imprimir / salvar em PDF</button>
+      </div>
+      ${wheelReportHtml(entry, prev, p)}`, 'pacientes');
+    if ($('#wsel')) $('#wsel').addEventListener('change', (e) => viewWheelReport(pid, e.target.value));
+    $('#wprint').addEventListener('click', () => window.print());
+  }
+
   // Terapeuta: tópico Roda da Vida na ficha
   function wheelTherapistCard(acc, entries) {
     const first = entries[0], last = entries[entries.length - 1];
@@ -657,7 +815,8 @@
       ${last ? `${wheelSvg(last.scores, entries.length > 1 ? first.scores : null)}${wheelLegend(entries.length > 1 ? first.created_at : null)}
         ${last.focus ? `<p><span class="muted small">Área para cuidar primeiro:</span> <strong>${esc(areaLabel(last.focus))}</strong></p>` : ''}
         ${last.reflection ? `<p class="prose">${esc(last.reflection)}</p>` : ''}
-        ${entries.length > 1 ? `<details><summary class="sub-h" style="cursor:pointer">Comparar primeira e atual</summary>${wheelChanges(first, last)}</details>` : ''}` : ''}
+        ${entries.length > 1 ? `<details><summary class="sub-h" style="cursor:pointer">Comparar primeira e atual</summary>${wheelChanges(first, last)}</details>` : ''}
+        <a class="btn sm" href="#/paciente/${last.patient_id}/roda-relatorio">${icon('file', 18)}Ver relatório com estratégias de PNL</a>` : ''}
       ${acc ? '<button type="button" class="btn-link" id="wheel-revoke">Remover acesso do paciente</button>' : ''}
     </section>`;
   }
@@ -1477,6 +1636,7 @@
       if (me.role === 'therapist') {
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/termo$/))) return await viewPatientTerms(m[1]);
+        if ((m = h.match(/^#\/paciente\/([\w-]+)\/roda-relatorio$/))) return await viewWheelReport(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
         if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
