@@ -304,3 +304,7 @@ details.card[open] > summary::after { content: "–"; }
 /* ---------- manutenção ---------- */
 .maint { justify-content: center; text-align: left; }
 .maint details { margin-top: 8px; }
+
+/* ---------- pacientes inativos ---------- */
+.item.inactive { opacity: 0.75; }
+.item.inactive .avatar { filter: grayscale(1); }

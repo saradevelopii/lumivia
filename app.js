@@ -805,18 +805,32 @@
     const weekDiaries = diary.filter((d) => new Date(d.created_at) > Date.now() - 7 * DAY).length;
     const urls = await avatarUrls(patients.map((p) => p.avatar_path));
 
+    const activeP = patients.filter((p) => p.active !== false);
+    const inactiveP = patients.filter((p) => p.active === false);
+    let showInactive = false;
+
     const row = (p) => {
       const ph = currentPhase(p.id);
-      return `<a class="item" href="#/paciente/${p.id}" data-name="${esc((p.full_name || '').toLowerCase() + ' ' + (p.email || '').toLowerCase())}">
+      const off = p.active === false;
+      return `<a class="item${off ? ' inactive' : ''}" href="#/paciente/${p.id}" data-name="${esc((p.full_name || '').toLowerCase() + ' ' + (p.email || '').toLowerCase())}">
         ${avatarHtml(p, urls)}
-        <span class="item-body"><strong>${esc(p.full_name || p.email)}</strong><span class="muted small">${ph ? `Fase ${ph.position} · ${esc(ph.name)}` : 'Nenhuma fase liberada'}</span></span>
-        <span class="badges">${hasNew(p.id) ? '<span class="badge">Diário novo</span>' : ''}${termBadge(p.id)}</span></a>`;
+        <span class="item-body"><strong>${esc(p.full_name || p.email)}</strong><span class="muted small">${off ? `Inativo${p.deactivated_at ? ' desde ' + esc(fmtDate(p.deactivated_at)) : ''}` : ph ? `Fase ${ph.position} · ${esc(ph.name)}` : 'Nenhuma fase liberada'}</span></span>
+        ${off ? '' : `<span class="badges">${hasNew(p.id) ? '<span class="badge">Diário novo</span>' : ''}${termBadge(p.id)}</span>`}</a>`;
+    };
+    const listHtml = () => {
+      const arr = showInactive ? inactiveP : activeP;
+      if (arr.length) return arr.map(row).join('');
+      return showInactive ? '<p class="muted">Nenhum paciente inativo.</p>' : '<p class="muted">Nenhum paciente ativo. Veja abaixo como convidar.</p>';
     };
 
     shell(`${darkHeader('Painel da terapeuta', 'Pacientes', '', null,
-        `<div class="stats"><div><strong>${patients.length}</strong><span>ativos</span></div><div><strong>${patients.filter((p) => hasNew(p.id)).length}</strong><span>diários novos</span></div><div><strong>${weekDiaries}</strong><span>registros na semana</span></div></div>`)}
+        `<div class="stats"><div><strong>${activeP.length}</strong><span>ativos</span></div><div><strong>${activeP.filter((p) => hasNew(p.id)).length}</strong><span>diários novos</span></div><div><strong>${weekDiaries}</strong><span>registros na semana</span></div></div>`)}
+      <div class="pills" role="group" aria-label="Mostrar pacientes">
+        <button type="button" class="pill" data-tab="on" aria-pressed="true">Ativos (${activeP.length})</button>
+        <button type="button" class="pill" data-tab="off" aria-pressed="false">Inativos (${inactiveP.length})</button>
+      </div>
       ${field('busca', 'Buscar paciente', '<input id="busca" type="search" placeholder="Nome ou e-mail" autocomplete="off">')}
-      <div id="plist" class="stack">${patients.length ? patients.map(row).join('') : '<p class="muted">Nenhum paciente ainda. Veja abaixo como convidar.</p>'}</div>
+      <div id="plist" class="stack">${listHtml()}</div>
       <details class="card">
         <summary>+ Convidar novo paciente</summary>
         <ol class="stack" style="padding-left:20px;margin:0">
@@ -827,10 +841,17 @@
         </ol>
       </details>`, 'pacientes');
 
-    $('#busca').addEventListener('input', (e) => {
-      const t = e.target.value.trim().toLowerCase();
+    const filterList = () => {
+      const t = $('#busca').value.trim().toLowerCase();
       $$('#plist [data-name]').forEach((a) => { a.style.display = a.dataset.name.includes(t) ? '' : 'none'; });
-    });
+    };
+    $('#busca').addEventListener('input', filterList);
+    $$('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+      showInactive = b.dataset.tab === 'off';
+      $$('[data-tab]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      $('#plist').innerHTML = listHtml();
+      filterList();
+    }));
   }
 
   async function viewPatient(pid) {
@@ -884,8 +905,21 @@
       <form class="inline" data-add="${table}"><label class="sr" for="add-${table}">Nova ${label}</label>
         <input id="add-${table}" type="text" placeholder="Nova ${label}" required><button class="btn sm" type="submit">Adicionar</button></form>`;
 
+    const off = p.active === false;
+    const statusCard = `<section class="card">
+        <h2>Situação</h2>
+        <div class="term-row">
+          <div class="term-info"><strong>${off ? 'Acompanhamento encerrado' : 'Em acompanhamento'}</strong>
+            <span class="muted small">${off ? `Inativo${p.deactivated_at ? ' desde ' + esc(fmtDate(p.deactivated_at)) : ''} · sem acesso ao site` : 'O paciente tem acesso ao site'}</span></div>
+          <span class="status ${off ? 'pending' : 'ok'}">${off ? 'Inativo' : icon('check', 16) + 'Ativo'}</span>
+        </div>
+        ${off
+          ? '<button type="button" class="btn sm" id="reactivate">Reativar paciente</button>'
+          : '<button type="button" class="btn sm danger" id="deactivate">Encerrar acompanhamento (inativar)</button><p class="muted small">O paciente perde o acesso, mas nada é apagado: diário, sessões e termos ficam guardados e você pode reativar quando quiser.</p>'}
+      </section>`;
+
     shell(`${darkHeader('', p.full_name || p.email, `${total} ${total === 1 ? 'sessão registrada' : 'sessões registradas'} · ${p.email || ''}`, ['#/pacientes', 'Pacientes'])}
-      <a class="btn" href="#/paciente/${pid}/nova-sessao">Registrar sessão</a>
+      ${off ? `<p class="consent-pending">Paciente inativo desde ${esc(fmtDate(p.deactivated_at || new Date()))}. Ele não consegue acessar o site.</p>` : `<a class="btn" href="#/paciente/${pid}/nova-sessao">Registrar sessão</a>`}
       <section class="card">
         <h2>Perfil do paciente</h2>
         <div class="profile-row">${avatarHtml(p, urls, 'lg')}${photoControls('pphoto', !!p.avatar_path)}</div>
@@ -910,8 +944,16 @@
           ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>` : ''}
           ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3><p class="prose">${esc(noteBy[s.id])}</p>` : ''}
           <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
-        : '<p class="muted">Nenhuma sessão registrada.</p>'}`, 'pacientes');
+        : '<p class="muted">Nenhuma sessão registrada.</p>'}
+      ${statusCard}`, 'pacientes');
 
+    if ($('#deactivate')) $('#deactivate').addEventListener('click', async () => {
+      if (!confirm(`Encerrar o acompanhamento de ${p.full_name || p.email}?\n\nO paciente perde o acesso ao site. Nada é apagado e você pode reativar quando quiser.`)) return;
+      try { await q(sb.from('profiles').update({ active: false, deactivated_at: new Date().toISOString() }).eq('id', pid)); toast('Paciente inativado.'); viewPatient(pid); } catch (err) { /* toast */ }
+    });
+    if ($('#reactivate')) $('#reactivate').addEventListener('click', async () => {
+      try { await q(sb.from('profiles').update({ active: true, deactivated_at: null }).eq('id', pid)); toast('Paciente reativado.'); viewPatient(pid); } catch (err) { /* toast */ }
+    });
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     bindReceipt(cs, p);
     bindTermsForm(pid, () => viewPatient(pid));
@@ -1076,7 +1118,7 @@
         <label class="check-line"><input type="radio" name="aud" value="phase"${aud === 'phase' ? ' checked' : ''}> Todos os pacientes com esta fase liberada</label>
         <label class="check-line"><input type="radio" name="aud" value="selected"${aud === 'selected' ? ' checked' : ''}> Só pacientes escolhidos (personalizado)</label>
         <div id="selbox" class="selbox"${aud === 'selected' ? '' : ' hidden'}>
-          ${patients.length ? patients.map((p) => `<label class="check-line"><input type="checkbox" name="pt" value="${p.id}"${assigned.has(p.id) ? ' checked' : ''}> ${esc(p.full_name || p.email)}</label>`).join('')
+          ${patients.length ? patients.map((p) => `<label class="check-line"><input type="checkbox" name="pt" value="${p.id}"${assigned.has(p.id) ? ' checked' : ''}> ${esc(p.full_name || p.email)}${p.active === false ? ' <span class="muted small">(inativo)</span>' : ''}</label>`).join('')
             : '<p class="muted small">Nenhum paciente cadastrado ainda.</p>'}
           <label class="check-line respect"><input type="checkbox" id="respect"${respect ? ' checked' : ''}> Mostrar só quando esta fase estiver liberada para o paciente</label>
           <p class="muted small">Desmarcado, o conteúdo aparece para o paciente assim que você salvar.</p>
@@ -1127,7 +1169,7 @@
     const [c, phases, patients, assigns] = await Promise.all([
       q(sb.from('contents').select('*').eq('id', id).maybeSingle()),
       q(sb.from('phases').select('*').order('position')),
-      q(sb.from('profiles').select('id,full_name,email').eq('role', 'patient').order('full_name')),
+      q(sb.from('profiles').select('id,full_name,email,active').eq('role', 'patient').order('full_name')),
       q(sb.from('content_patients').select('patient_id').eq('content_id', id))
     ]);
     if (!c) { toast('Conteúdo não encontrado.', true); go('#/biblioteca'); return; }
@@ -1175,7 +1217,7 @@
     const [phases, contents, patients, assigns] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('contents').select('*').order('created_at')),
-      q(sb.from('profiles').select('id,full_name,email').eq('role', 'patient').order('full_name')),
+      q(sb.from('profiles').select('id,full_name,email,active').eq('role', 'patient').order('full_name')),
       q(sb.from('content_patients').select('content_id'))
     ]);
     const countBy = {};
@@ -1250,9 +1292,23 @@
   }
 
   /* ================= rotas ================= */
+  // Paciente inativo (acompanhamento encerrado): só vê esta mensagem
+  function viewEnded() {
+    loadingView = false;
+    $app.innerHTML = `<main class="login maint">
+      <div class="brand">${icon('leaf', 28)}</div>
+      <h1>Seu acompanhamento foi encerrado</h1>
+      <p class="lead">Obrigada por ter compartilhado essa jornada comigo. Seu acesso ao ${esc(APP)} foi encerrado, mas tudo o que construímos continua com você.</p>
+      <p class="muted">Se quiser retomar o acompanhamento, é só entrar em contato com sua terapeuta. Seus registros continuam guardados com sigilo, e você pode pedir a exclusão dos seus dados a qualquer momento.</p>
+      <button class="btn ghost" type="button" id="ended-out">Sair</button>
+    </main>`;
+    document.getElementById('ended-out').addEventListener('click', () => sb.auth.signOut());
+  }
+
   async function route() {
     const h = location.hash || '#/';
     if (!me) return viewLogin();
+    if (me.role === 'patient' && me.active === false) return viewEnded();
     let m;
     loadingView = true;
     try {
