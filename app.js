@@ -13,6 +13,12 @@
   const BUCKET = 'materiais';
   // Ao mudar o texto dos Acordos, troque a versão: todos os pacientes serão convidados a aceitar de novo.
   const CONSENT_VERSION = 'acordos-v1';
+  // Como cada versão aparece na tela e no comprovante: sempre o mês e as condições do documento.
+  // Ao criar uma nova versão, acrescente uma linha aqui (as antigas continuam valendo para quem aceitou).
+  const CONSENT_LABELS = {
+    'acordos-v1': 'novembro de 2026 (R$ 400,00 · tolerância de 15 min)'
+  };
+  const versionLabel = (v) => CONSENT_LABELS[v] || v;
   const DAY = 864e5;
 
   if (!cfg.SUPABASE_URL || /SEU-PROJETO/.test(cfg.SUPABASE_URL) || !window.supabase) {
@@ -145,7 +151,7 @@
     return `<section class="card">
       <h2>Termos</h2>
       <div class="term-row">
-        <div class="term-info"><strong>Acordos do processo</strong><span class="muted small">Versão ${esc(CONSENT_VERSION)}</span></div>
+        <div class="term-info"><strong>Acordos do processo</strong><span class="muted small">Versão: ${esc(versionLabel(cs ? cs.version : CONSENT_VERSION))}</span></div>
         <span class="status ${cs ? 'ok' : 'pending'}">${cs ? icon('check', 16) + 'Aceito' : 'Pendente'}</span>
       </div>
       ${cs ? `<dl class="term-meta">
@@ -183,7 +189,7 @@
         <p class="stamp">✓ O documento “Acordos do processo” foi aceito eletronicamente pelo(a) paciente abaixo.</p>
         <table>
           <tr><td>Documento</td><td>Acordos do processo — combinados do acompanhamento e termo de consentimento</td></tr>
-          <tr><td>Versão</td><td>${esc(cs.version)}</td></tr>
+          <tr><td>Versão</td><td>${esc(versionLabel(cs.version))}</td></tr>
           <tr><td>Paciente</td><td>${esc(p.full_name || '')}</td></tr>
           <tr><td>E-mail da conta</td><td>${esc(p.email || '')}</td></tr>
           <tr><td>Assinado como</td><td>${esc(cs.full_name)}</td></tr>
