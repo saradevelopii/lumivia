@@ -89,6 +89,14 @@ p { margin: 0; }
   font-weight: 600; text-decoration: none; flex-shrink: 0;
 }
 
+.avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar.lg { width: 112px; height: 112px; font-size: 36px; }
+.profile-row { display: flex; align-items: center; gap: 16px; flex-direction: row; }
+.photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.photo-actions label.btn { cursor: pointer; }
+.photo-actions input:focus-visible + label, .photo-actions label:focus-within { outline: 3px solid #7FB3A5; outline-offset: 2px; }
+
 /* ---------- navegação inferior ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0;
@@ -148,6 +156,7 @@ fieldset { border: none; margin: 0; }
   color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
 }
 .icon-btn:hover { background: var(--soft); color: var(--danger); }
+.icon-btn.edit:hover { color: var(--brand); }
 .inline { display: flex; gap: 8px; }
 .inline input { flex: 1; min-width: 0; }
 

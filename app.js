@@ -73,6 +73,64 @@
     return map;
   }
 
+  /* ---------- fotos de perfil ---------- */
+  const AVATARS = 'avatars';
+  async function avatarUrls(paths) {
+    const list = Array.from(new Set(paths.filter(Boolean)));
+    if (!list.length) return {};
+    const { data } = await sb.storage.from(AVATARS).createSignedUrls(list, 3600);
+    const map = {};
+    (data || []).forEach((d) => { if (d.signedUrl && d.path) map[d.path] = d.signedUrl; });
+    return map;
+  }
+  function avatarHtml(p, urls, extraCls, href, label) {
+    const url = p && p.avatar_path ? urls[p.avatar_path] : '';
+    const inner = url ? `<img src="${esc(url)}" alt="">` : esc(initials(p && p.full_name));
+    const cls = 'avatar' + (extraCls ? ' ' + extraCls : '');
+    return href ? `<a class="${cls}" href="${href}" aria-label="${esc(label)}">${inner}</a>` : `<span class="${cls}" aria-hidden="true">${inner}</span>`;
+  }
+  async function toSquareJpeg(file, size) {
+    let img;
+    try { img = await createImageBitmap(file); }
+    catch (e) { toast('Não foi possível abrir essa imagem. Use uma foto JPG ou PNG.', true); throw e; }
+    const s = Math.min(img.width, img.height);
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+    return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.85));
+  }
+  async function changeAvatar(target, file, oldPath) {
+    const blob = await toSquareJpeg(file, 400);
+    const path = `${target}/${uuid()}.jpg`;
+    const { error } = await sb.storage.from(AVATARS).upload(path, blob, { contentType: 'image/jpeg' });
+    if (error) { toast(traduzErro(error.message), true); throw error; }
+    await q(sb.rpc('set_avatar', { target, path }));
+    if (oldPath) await sb.storage.from(AVATARS).remove([oldPath]);
+  }
+  async function removeAvatar(target, oldPath) {
+    await q(sb.rpc('set_avatar', { target, path: null }));
+    if (oldPath) await sb.storage.from(AVATARS).remove([oldPath]);
+  }
+  const photoControls = (id, hasPhoto) => `<div class="photo-actions">
+      <label class="btn ghost sm" for="${id}">${hasPhoto ? 'Trocar foto' : 'Adicionar foto'}</label>
+      <input id="${id}" type="file" accept="image/*" class="sr">
+      ${hasPhoto ? `<button type="button" class="btn-link" data-rmphoto="${id}">Remover foto</button>` : ''}</div>`;
+  function bindPhoto(id, target, oldPath, after) {
+    const input = $('#' + id);
+    if (input) input.addEventListener('change', async () => {
+      const f = input.files[0];
+      if (!f) return;
+      if (f.size > 15 * 1024 * 1024) return toast('Foto grande demais (máximo 15 MB).', true);
+      toast('Enviando foto…');
+      try { await changeAvatar(target, f, oldPath); toast('Foto atualizada.'); after(); } catch (e) { /* toast */ }
+    });
+    const rm = $(`[data-rmphoto="${id}"]`);
+    if (rm) rm.addEventListener('click', async () => {
+      if (!confirm('Remover a foto de perfil?')) return;
+      try { await removeAvatar(target, oldPath); after(); } catch (e) { /* toast */ }
+    });
+  }
+
   async function upload(path, file) {
     const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
     if (error) { toast(traduzErro(error.message), true); throw error; }
@@ -172,12 +230,19 @@
     });
   }
 
-  function viewAccount() {
+  async function viewAccount() {
+    loading();
+    const urls = await avatarUrls([me.avatar_path]);
+    const isT = me.role === 'therapist';
     shell(`${header('Conta', me.email)}
       ${recovering ? '<section class="card"><p><strong>Crie sua nova senha abaixo.</strong></p></section>' : ''}
       <section class="card">
-        <h2>Seu nome</h2>
-        <p>${esc(me.full_name || '—')}</p>
+        <h2>Seu perfil</h2>
+        <div class="profile-row">${avatarHtml(me, urls, 'lg')}${photoControls('myphoto', !!me.avatar_path)}</div>
+        ${isT
+          ? `<form id="myname" class="inline"><label class="sr" for="mname">Seu nome</label>
+              <input id="mname" type="text" value="${esc(me.full_name || '')}" placeholder="Seu nome" required><button class="btn sm" type="submit">Salvar nome</button></form>`
+          : `<p><strong>${esc(me.full_name || '—')}</strong></p><p class="muted small">Para corrigir seu nome, fale com sua terapeuta.</p>`}
       </section>
       <section class="card">
         <form id="pw" class="stack">
@@ -200,19 +265,29 @@
       } catch (err) { /* toast já exibido */ }
     });
     $('#sair').addEventListener('click', () => sb.auth.signOut());
+    bindPhoto('myphoto', me.id, me.avatar_path, async () => { await loadMe(); viewAccount(); });
+    if ($('#myname')) $('#myname').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const full_name = $('#mname').value.trim();
+      if (!full_name) return;
+      try { await q(sb.from('profiles').update({ full_name }).eq('id', me.id)); await loadMe(); toast('Nome salvo.'); } catch (err) { /* toast */ }
+    });
   }
 
   /* ================= PACIENTE ================= */
   async function viewHome() {
     loading();
     const since = new Date(Date.now() - 42 * DAY).toISOString();
-    const [phases, unlocks, goals, diary, latest] = await Promise.all([
+    const [phases, unlocks, goals, diary, latest, therapists] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
       q(sb.from('goals').select('*').eq('patient_id', me.id).order('created_at')),
       q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', me.id).gte('created_at', since)),
-      q(sb.from('contents').select('id,title,kind').order('created_at', { ascending: false }).limit(1))
+      q(sb.from('contents').select('id,title,kind').order('created_at', { ascending: false }).limit(1)),
+      q(sb.from('profiles').select('id,full_name,avatar_path').eq('role', 'therapist').limit(1))
     ]);
+    const ther = therapists[0];
+    const urls = await avatarUrls([me.avatar_path, ther && ther.avatar_path]);
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const opened = phases.filter((p) => unlocked.has(p.id));
     const current = opened[opened.length - 1];
@@ -233,7 +308,7 @@
     const chartLabel = weeks.map((w, i) => (w.length ? `semana ${i + 1}: ${MOODS[Math.round(w.reduce((a, b) => a + b, 0) / w.length)]}` : `semana ${i + 1}: sem registros`)).join(', ');
 
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
-        <a class="avatar" href="#/conta" aria-label="Minha conta">${esc(initials(me.full_name))}</a></header>
+        ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       <section class="journey">
         <div class="row-between"><span class="kicker">Sua jornada</span><span class="kicker">${current ? `Fase ${current.position} de ${phases.length}` : ''}</span></div>
         <h2>${esc(current ? current.name : 'Sua jornada vai começar em breve')}</h2>
@@ -251,7 +326,8 @@
           : '<p class="muted">Suas metas aparecerão aqui depois da sessão.</p>'}
       </section>
       ${latest[0] ? `<a class="highlight" href="#/conteudo/${latest[0].id}"><span class="hl-ico">${icon(kindIcon(latest[0].kind), 20)}</span>
-        <span><span class="kicker-amber">CONTEÚDO MAIS RECENTE</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}`, 'inicio');
+        <span><span class="kicker-amber">CONTEÚDO MAIS RECENTE</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
+      ${ther ? `<section class="card profile-row">${avatarHtml(ther, urls)}<div><p class="muted small">Sua terapeuta</p><strong>${esc(ther.full_name || '')}</strong></div></section>` : ''}`, 'inicio');
     bindChecks('data-goal', 'goals');
   }
 
@@ -316,6 +392,7 @@
     const actions = [];
     if (file && !media) actions.push(`<a class="btn" href="${esc(file)}" target="_blank" rel="noopener">${icon('file', 20)}Abrir arquivo</a>`);
     if (link && !yt) actions.push(`<a class="btn ghost" href="${esc(link)}" target="_blank" rel="noopener">${icon('link', 20)}Abrir link</a>`);
+    if (me.role === 'therapist') actions.push(`<a class="btn ghost" href="#/biblioteca/editar/${c.id}">${icon('pen', 20)}Editar conteúdo</a>`);
 
     shell(`<a class="back-l" href="${backHref}">${icon('back', 18)}${backLabel}</a>
       <header class="hd"><div><p class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</p><h1>${esc(c.title)}</h1></div></header>
@@ -419,11 +496,12 @@
     const currentPhase = (pid) => unlocks.filter((u) => u.patient_id === pid).map((u) => phaseById[u.phase_id]).filter(Boolean).sort((a, b) => b.position - a.position)[0];
     const hasNew = (pid) => lastDiary[pid] && (!lastSession[pid] || new Date(lastDiary[pid]) > new Date(lastSession[pid]));
     const weekDiaries = diary.filter((d) => new Date(d.created_at) > Date.now() - 7 * DAY).length;
+    const urls = await avatarUrls(patients.map((p) => p.avatar_path));
 
     const row = (p) => {
       const ph = currentPhase(p.id);
       return `<a class="item" href="#/paciente/${p.id}" data-name="${esc((p.full_name || '').toLowerCase() + ' ' + (p.email || '').toLowerCase())}">
-        <span class="avatar">${esc(initials(p.full_name))}</span>
+        ${avatarHtml(p, urls)}
         <span class="item-body"><strong>${esc(p.full_name || p.email)}</strong><span class="muted small">${ph ? `Fase ${ph.position} · ${esc(ph.name)}` : 'Nenhuma fase liberada'}</span></span>
         ${hasNew(p.id) ? '<span class="badge">Diário novo</span>' : ''}</a>`;
     };
@@ -466,6 +544,7 @@
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
+    const urls = await avatarUrls([p.avatar_path]);
 
     const listRows = (items, table, label) => `${items.length ? `<ul class="rows">${items.map((it) => `<li><span class="${it.done ? 'done' : ''}">${esc(it.title)}</span>
         <button type="button" class="icon-btn" data-del="${table}:${it.id}" aria-label="Remover ${label}: ${esc(it.title)}">${icon('trash', 18)}</button></li>`).join('')}</ul>` : `<p class="muted small">Nenhuma ${label} ainda.</p>`}
@@ -475,6 +554,8 @@
     shell(`${darkHeader('', p.full_name || p.email, `${total} ${total === 1 ? 'sessão registrada' : 'sessões registradas'} · ${p.email || ''}`, ['#/pacientes', 'Pacientes'])}
       <a class="btn" href="#/paciente/${pid}/nova-sessao">Registrar sessão</a>
       <section class="card">
+        <h2>Perfil do paciente</h2>
+        <div class="profile-row">${avatarHtml(p, urls, 'lg')}${photoControls('pphoto', !!p.avatar_path)}</div>
         <form id="nf" class="inline"><label class="sr" for="pname">Nome do paciente</label>
           <input id="pname" type="text" value="${esc(p.full_name || '')}" placeholder="Nome completo"><button class="btn sm ghost" type="submit">Salvar nome</button></form>
       </section>
@@ -496,6 +577,7 @@
           <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
         : '<p class="muted">Nenhuma sessão registrada.</p>'}`, 'pacientes');
 
+    bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     $('#nf').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await q(sb.from('profiles').update({ full_name: $('#pname').value.trim() || null }).eq('id', pid)); toast('Nome salvo.'); viewPatient(pid); } catch (err) { /* toast */ }
@@ -610,6 +692,87 @@
     });
   }
 
+  /* --- formulário de conteúdo (novo e edição) --- */
+  function contentFields(phases, c) {
+    c = c || {};
+    const sel = (a, b) => (String(a) === String(b) ? ' selected' : '');
+    const fileName = c.file_path ? c.file_path.split('/').pop().replace(/^[0-9a-f-]{36}-/i, '') : '';
+    return `
+      ${field('cphase', 'Fase', `<select id="cphase">${phases.map((p) => `<option value="${p.id}"${sel(p.id, c.phase_id)}>${p.position} · ${esc(p.name)}</option>`).join('')}</select>`)}
+      ${field('ckind', 'Tipo', `<select id="ckind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}"${sel(k, c.kind)}>${l}</option>`).join('')}</select>`)}
+      ${field('ctitle', 'Título', `<input id="ctitle" type="text" value="${esc(c.title || '')}" required>`)}
+      ${field('cdur', 'Duração (opcional)', `<input id="cdur" type="text" value="${esc(c.duration || '')}" placeholder="Ex.: 12 min">`)}
+      ${field('cbody', 'Texto ou instruções (opcional)', `<textarea id="cbody" rows="8">${esc(c.body || '')}</textarea>`)}
+      ${field('curl', 'Link (opcional) — YouTube, site, Google Drive…', `<input id="curl" type="url" value="${esc(c.url || '')}" placeholder="https://…">`)}
+      ${c.file_path ? `<div class="mat">${icon('file', 20)}<span>Arquivo atual: ${esc(fileName)}</span></div>
+        <label class="check-line"><input type="checkbox" id="cremove"> Remover o arquivo atual</label>` : ''}
+      ${field('cfile', c.file_path ? 'Substituir por outro arquivo (opcional · até 50 MB)' : 'Arquivo (opcional · até 50 MB)', '<input id="cfile" type="file">')}`;
+  }
+
+  function readContentForm() {
+    const title = $('#ctitle').value.trim();
+    const rawUrl = $('#curl').value.trim();
+    const url = safeUrl(rawUrl);
+    const file = $('#cfile').files[0];
+    if (!title) { toast('Dê um título ao conteúdo.', true); return null; }
+    if (rawUrl && !url) { toast('O link precisa começar com https://', true); return null; }
+    if (file && file.size > 50 * 1024 * 1024) { toast('Arquivo acima de 50 MB. Para vídeos, use o YouTube não listado.', true); return null; }
+    const phase_id = Number($('#cphase').value);
+    return {
+      phase_id, file, remove: !!($('#cremove') && $('#cremove').checked),
+      row: {
+        phase_id, kind: $('#ckind').value, title,
+        duration: $('#cdur').value.trim() || null,
+        body: $('#cbody').value.trim() || null,
+        url: url || null
+      }
+    };
+  }
+
+  async function viewEditContent(id) {
+    loading();
+    const [c, phases] = await Promise.all([
+      q(sb.from('contents').select('*').eq('id', id).maybeSingle()),
+      q(sb.from('phases').select('*').order('position'))
+    ]);
+    if (!c) { toast('Conteúdo não encontrado.', true); go('#/biblioteca'); return; }
+
+    shell(`<a class="back-l" href="#/biblioteca">${icon('back', 18)}Biblioteca</a>
+      ${header('Editar conteúdo', 'As mudanças aparecem na hora para os pacientes')}
+      <form id="ef" class="card stack">
+        ${contentFields(phases, c)}
+        <button class="btn" type="submit">Salvar alterações</button>
+        <a class="btn ghost" href="#/conteudo/${c.id}">Ver como o paciente vê</a>
+      </form>`, 'biblioteca');
+
+    $('#ef').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('#ef button[type=submit]');
+      const v = readContentForm();
+      if (!v) return;
+      btn.disabled = true;
+      btn.textContent = v.file ? 'Enviando arquivo…' : 'Salvando…';
+      try {
+        let file_path = c.file_path;
+        const old = c.file_path;
+        if (v.file) {
+          file_path = await upload(`conteudos/${v.phase_id}/${uuid()}-${cleanName(v.file.name)}`, v.file);
+        } else if (v.remove) {
+          file_path = null;
+        } else if (old && Number(c.phase_id) !== v.phase_id) {
+          // o arquivo acompanha a fase (as regras de acesso dependem da pasta)
+          file_path = `conteudos/${v.phase_id}/${old.split('/').pop()}`;
+          const { error } = await sb.storage.from(BUCKET).copy(old, file_path);
+          if (error) { toast(traduzErro(error.message), true); throw error; }
+        }
+        await q(sb.from('contents').update({ ...v.row, file_path }).eq('id', c.id));
+        if (old && old !== file_path) await sb.storage.from(BUCKET).remove([old]);
+        toast('Conteúdo atualizado.');
+        go('#/biblioteca');
+      } catch (err) { btn.disabled = false; btn.textContent = 'Salvar alterações'; }
+    });
+  }
+
   async function viewLibrary() {
     loading();
     const [phases, contents] = await Promise.all([
@@ -621,13 +784,7 @@
       <details class="card" ${contents.length ? '' : 'open'}>
         <summary>+ Novo conteúdo</summary>
         <form id="cf" class="stack">
-          ${field('cphase', 'Fase', `<select id="cphase">${phases.map((p) => `<option value="${p.id}">${p.position} · ${esc(p.name)}</option>`).join('')}</select>`)}
-          ${field('ckind', 'Tipo', `<select id="ckind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>`)}
-          ${field('ctitle', 'Título', '<input id="ctitle" type="text" required>')}
-          ${field('cdur', 'Duração (opcional)', '<input id="cdur" type="text" placeholder="Ex.: 12 min">')}
-          ${field('cbody', 'Texto ou instruções (opcional)', '<textarea id="cbody" rows="5"></textarea>')}
-          ${field('curl', 'Link (opcional) — YouTube, site, Google Drive…', '<input id="curl" type="url" placeholder="https://…">')}
-          ${field('cfile', 'Arquivo (opcional · até 50 MB)', '<input id="cfile" type="file">')}
+          ${contentFields(phases, null)}
           <button class="btn" type="submit">Adicionar à biblioteca</button>
         </form>
       </details>
@@ -637,6 +794,7 @@
             <button type="button" class="btn-link" data-rename="${p.id}" aria-label="Renomear fase ${esc(p.name)}">Renomear</button></div>
           ${items.length ? items.map((c) => `<div class="item"><a class="thumb" href="#/conteudo/${c.id}" aria-label="Ver ${esc(c.title)}">${icon(kindIcon(c.kind))}</a>
             <a class="item-body" href="#/conteudo/${c.id}" style="text-decoration:none;color:inherit"><strong>${esc(c.title)}</strong><span class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</span></a>
+            <a class="icon-btn edit" href="#/biblioteca/editar/${c.id}" aria-label="Editar ${esc(c.title)}">${icon('pen', 18)}</a>
             <button type="button" class="icon-btn" data-delc="${c.id}" aria-label="Apagar ${esc(c.title)}">${icon('trash', 18)}</button></div>`).join('')
             : '<p class="muted small">Nenhum conteúdo nesta fase.</p>'}`;
       }).join('')}
@@ -648,24 +806,13 @@
     $('#cf').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = $('#cf button[type=submit]');
-      const title = $('#ctitle').value.trim();
-      const rawUrl = $('#curl').value.trim();
-      const url = safeUrl(rawUrl);
-      const file = $('#cfile').files[0];
-      if (!title) return toast('Dê um título ao conteúdo.', true);
-      if (rawUrl && !url) return toast('O link precisa começar com https://', true);
-      if (file && file.size > 50 * 1024 * 1024) return toast('Arquivo acima de 50 MB. Para vídeos, use o YouTube não listado.', true);
+      const v = readContentForm();
+      if (!v) return;
       btn.disabled = true;
-      btn.textContent = file ? 'Enviando arquivo…' : 'Salvando…';
+      btn.textContent = v.file ? 'Enviando arquivo…' : 'Salvando…';
       try {
-        const phase_id = Number($('#cphase').value);
-        const file_path = file ? await upload(`conteudos/${phase_id}/${uuid()}-${cleanName(file.name)}`, file) : null;
-        await q(sb.from('contents').insert({
-          phase_id, kind: $('#ckind').value, title,
-          duration: $('#cdur').value.trim() || null,
-          body: $('#cbody').value.trim() || null,
-          url: url || null, file_path
-        }));
+        const file_path = v.file ? await upload(`conteudos/${v.phase_id}/${uuid()}-${cleanName(v.file.name)}`, v.file) : null;
+        await q(sb.from('contents').insert({ ...v.row, file_path }));
         toast('Conteúdo adicionado.');
         viewLibrary();
       } catch (err) { btn.disabled = false; btn.textContent = 'Adicionar à biblioteca'; }
@@ -700,11 +847,12 @@
     if (!me) return viewLogin();
     let m;
     try {
-      if (h === '#/conta') return viewAccount();
+      if (h === '#/conta') return await viewAccount();
       if ((m = h.match(/^#\/conteudo\/([\w-]+)$/))) return await viewContent(m[1]);
       if (me.role === 'therapist') {
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
+        if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
         return await viewPatients();
       }
