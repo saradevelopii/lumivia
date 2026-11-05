@@ -97,6 +97,12 @@ p { margin: 0; }
 .photo-actions label.btn { cursor: pointer; }
 .photo-actions input:focus-visible + label, .photo-actions label:focus-within { outline: 3px solid #7FB3A5; outline-offset: 2px; }
 
+.card.consent { border: 2px solid #E8CF9F; }
+.consent-ok, .consent-pending { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; border-radius: 12px; padding: 10px 12px; }
+.consent-ok { background: var(--brand-l); color: var(--brand-d); }
+.consent-ok svg { flex-shrink: 0; margin-top: 1px; }
+.consent-pending { background: var(--amber-bg); color: var(--amber); font-weight: 600; }
+
 /* ---------- navegação inferior ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0;

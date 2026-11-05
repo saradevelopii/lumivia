@@ -11,6 +11,8 @@
   const MOODS = ['Difícil', 'Baixo', 'Ok', 'Bem', 'Ótimo'];
   const KINDS = { video: 'Vídeo', texto: 'Texto', exercicio: 'Exercício', audio: 'Áudio', pdf: 'PDF', link: 'Link' };
   const BUCKET = 'materiais';
+  // Ao mudar o texto dos Acordos, troque a versão: todos os pacientes serão convidados a aceitar de novo.
+  const CONSENT_VERSION = 'acordos-v1';
   const DAY = 864e5;
 
   if (!cfg.SUPABASE_URL || /SEU-PROJETO/.test(cfg.SUPABASE_URL) || !window.supabase) {
@@ -153,7 +155,8 @@
     leaf: '<path d="M12 21c-4-3-7-6.5-7-10a4.5 4.5 0 0 1 7-3.7A4.5 4.5 0 0 1 19 11c0 3.5-3 7-7 10z"/><path d="M12 7.3V21"/>',
     back: '<path d="M15 18l-6-6 6-6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-    x: '<path d="M6 6l12 12M18 6 6 18"/>'
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    check: '<path d="M5 12l5 5L20 7"/>'
   };
   const icon = (n, size) => `<svg width="${size || 22}" height="${size || 22}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
   const kindIcon = (k) => ({ video: 'play', audio: 'audio', pdf: 'file', link: 'link', exercicio: 'pen', texto: 'book' }[k] || 'book');
@@ -278,14 +281,28 @@
   async function viewHome() {
     loading();
     const since = new Date(Date.now() - 42 * DAY).toISOString();
-    const [phases, unlocks, goals, diary, latest, therapists] = await Promise.all([
+    const [phases, unlocks, goals, diary, latest, therapists, consent, acordos] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
       q(sb.from('goals').select('*').eq('patient_id', me.id).order('created_at')),
       q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', me.id).gte('created_at', since)),
       q(sb.from('contents').select('id,title,kind').order('created_at', { ascending: false }).limit(1)),
-      q(sb.from('profiles').select('id,full_name,avatar_path').eq('role', 'therapist').limit(1))
+      q(sb.from('profiles').select('id,full_name,avatar_path').eq('role', 'therapist').limit(1)),
+      q(sb.from('consents').select('accepted_at').eq('patient_id', me.id).eq('version', CONSENT_VERSION).limit(1)),
+      q(sb.from('contents').select('id').ilike('title', '%acordos%').order('created_at', { ascending: false }).limit(1))
     ]);
+    const needsConsent = !consent.length;
+    const consentCard = needsConsent ? `<section class="card consent">
+        <span class="kicker-amber">ANTES DE COMEÇAR</span>
+        <h2>Leia e aceite os Acordos do processo</h2>
+        <p class="muted">São os combinados sobre sessões, sigilo, pagamento e uso dos seus dados.</p>
+        ${acordos[0] ? `<a class="btn ghost" href="#/conteudo/${acordos[0].id}">${icon('file', 20)}Ler os acordos</a>` : ''}
+        <form id="cform" class="stack">
+          <label class="check-line"><input type="checkbox" id="cok" required> Li e concordo com os Acordos do processo</label>
+          ${field('cname', 'Digite seu nome completo para assinar', `<input id="cname" type="text" autocomplete="name" value="" required>`)}
+          <button class="btn" type="submit">Aceitar e assinar</button>
+        </form>
+      </section>` : '';
     const ther = therapists[0];
     const urls = await avatarUrls([me.avatar_path, ther && ther.avatar_path]);
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
@@ -309,6 +326,7 @@
 
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
+      ${consentCard}
       <section class="journey">
         <div class="row-between"><span class="kicker">Sua jornada</span><span class="kicker">${current ? `Fase ${current.position} de ${phases.length}` : ''}</span></div>
         <h2>${esc(current ? current.name : 'Sua jornada vai começar em breve')}</h2>
@@ -329,6 +347,19 @@
         <span><span class="kicker-amber">CONTEÚDO MAIS RECENTE</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
       ${ther ? `<section class="card profile-row">${avatarHtml(ther, urls)}<div><p class="muted small">Sua terapeuta</p><strong>${esc(ther.full_name || '')}</strong></div></section>` : ''}`, 'inicio');
     bindChecks('data-goal', 'goals');
+    if (needsConsent) $('#cform').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const full_name = $('#cname').value.trim();
+      if (!$('#cok').checked) return toast('Marque que você leu e concorda.', true);
+      if (full_name.split(/\s+/).length < 2) return toast('Digite seu nome completo (nome e sobrenome).', true);
+      const btn = $('#cform button[type=submit]');
+      btn.disabled = true;
+      try {
+        await q(sb.from('consents').insert({ patient_id: me.id, version: CONSENT_VERSION, full_name, user_agent: navigator.userAgent.slice(0, 300) }));
+        toast('Acordos aceitos. Obrigada!');
+        viewHome();
+      } catch (err) { btn.disabled = false; }
+    });
   }
 
   async function viewContents() {
@@ -545,6 +576,11 @@
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const urls = await avatarUrls([p.avatar_path]);
+    const consents = await q(sb.from('consents').select('*').eq('patient_id', pid).eq('version', CONSENT_VERSION).limit(1));
+    const cs = consents[0];
+    const consentLine = cs
+      ? `<p class="consent-ok">${icon('check', 18)}<span>Acordos aceitos em ${esc(new Date(cs.accepted_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }))}, assinado como “${esc(cs.full_name)}”</span></p>`
+      : `<p class="consent-pending">Acordos do processo ainda não aceitos pelo paciente</p>`;
 
     const listRows = (items, table, label) => `${items.length ? `<ul class="rows">${items.map((it) => `<li><span class="${it.done ? 'done' : ''}">${esc(it.title)}</span>
         <button type="button" class="icon-btn" data-del="${table}:${it.id}" aria-label="Remover ${label}: ${esc(it.title)}">${icon('trash', 18)}</button></li>`).join('')}</ul>` : `<p class="muted small">Nenhuma ${label} ainda.</p>`}
@@ -556,6 +592,7 @@
       <section class="card">
         <h2>Perfil do paciente</h2>
         <div class="profile-row">${avatarHtml(p, urls, 'lg')}${photoControls('pphoto', !!p.avatar_path)}</div>
+        ${consentLine}
         <form id="nf" class="inline"><label class="sr" for="pname">Nome do paciente</label>
           <input id="pname" type="text" value="${esc(p.full_name || '')}" placeholder="Nome completo"><button class="btn sm ghost" type="submit">Salvar nome</button></form>
       </section>
