@@ -860,6 +860,42 @@
     </section>`;
   }
 
+  /* ================= gráfico de bem-estar (paciente e terapeuta) ================= */
+  // Por semana: primeiro a média de cada dia, depois a média dos dias.
+  // Assim, vários registros no mesmo dia não pesam mais do que um dia com um registro só.
+  function moodChart(diary, title, caption) {
+    const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`; };
+    const weeks = Array.from({ length: 6 }, () => new Map());
+    diary.forEach((d) => {
+      if (d.mood == null) return;
+      const w = Math.floor((Date.now() - new Date(d.created_at)) / (7 * DAY));
+      if (w < 0 || w >= 6) return;
+      const days = weeks[5 - w], k = dayKey(d.created_at);
+      if (!days.has(k)) days.set(k, []);
+      days.get(k).push(d.mood);
+    });
+    const stats = weeks.map((days) => {
+      const dayAvgs = [...days.values()].map((m) => m.reduce((a, b) => a + b, 0) / m.length);
+      return { avg: dayAvgs.length ? dayAvgs.reduce((a, b) => a + b, 0) / dayAvgs.length : null, n: dayAvgs.length };
+    });
+    const moodOf = (s) => MOODS[Math.round(s.avg)];
+    const label = (s) => (s.avg == null ? 'sem registros' : `média ${moodOf(s)} · ${s.n} ${s.n === 1 ? 'dia registrado' : 'dias registrados'}`);
+    const bars = stats.map((s, i) => {
+      const h = s.avg == null ? 6 : Math.round(((s.avg + 1) / 5) * 100);
+      return `<div class="bar"><span class="bar-val">${s.avg == null ? '' : esc(moodOf(s))}</span>
+        <div class="bar-track"><div class="bar-fill${i === 5 ? ' now' : ''}${s.avg == null ? ' empty' : ''}" style="height:${h}%" title="${label(s)}"></div></div>
+        <span>${i === 5 ? 'Agora' : '-' + (5 - i) + 's'}</span></div>`;
+    }).join('');
+    const now = stats[5];
+    const withData = stats.filter((s) => s.avg != null).length;
+    return `<section class="card">
+      <h2>${esc(title)}</h2>
+      <div class="bars" role="img" aria-label="${esc(stats.map((s, i) => `semana ${i + 1}: ${label(s)}`).join(', '))}">${bars}</div>
+      <p class="chart-sum"><strong>Esta semana:</strong> ${now.avg == null ? 'nenhum humor registrado ainda' : esc(label(now).replace('média ', ''))}${withData ? ` · ${withData} de 6 semanas com registros` : ''}</p>
+      <p class="muted small">${esc(caption)}</p>
+    </section>`;
+  }
+
   /* ================= PACIENTE ================= */
   async function viewHome() {
     loading();
@@ -893,29 +929,6 @@
     const current = opened[opened.length - 1];
     const pct = phases.length ? Math.round((opened.length / phases.length) * 100) : 0;
 
-    // Bem-estar por semana: primeiro a média de cada dia, depois a média dos dias.
-    // Assim, vários registros no mesmo dia não pesam mais do que um dia com um registro só.
-    const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`; };
-    const weeks = Array.from({ length: 6 }, () => new Map());
-    diary.forEach((d) => {
-      if (d.mood == null) return;
-      const w = Math.floor((Date.now() - new Date(d.created_at)) / (7 * DAY));
-      if (w < 0 || w >= 6) return;
-      const days = weeks[5 - w], k = dayKey(d.created_at);
-      if (!days.has(k)) days.set(k, []);
-      days.get(k).push(d.mood);
-    });
-    const weekStats = weeks.map((days) => {
-      const dayAvgs = [...days.values()].map((m) => m.reduce((a, b) => a + b, 0) / m.length);
-      return { avg: dayAvgs.length ? dayAvgs.reduce((a, b) => a + b, 0) / dayAvgs.length : null, n: dayAvgs.length };
-    });
-    const weekLabel = (s) => (s.avg == null ? 'sem registros' : `média ${MOODS[Math.round(s.avg)]} · ${s.n} ${s.n === 1 ? 'dia registrado' : 'dias registrados'}`);
-    const bars = weekStats.map((s, i) => {
-      const h = s.avg == null ? 6 : Math.round(((s.avg + 1) / 5) * 100);
-      return `<div class="bar"><div class="bar-track"><div class="bar-fill${i === 5 ? ' now' : ''}${s.avg == null ? ' empty' : ''}" style="height:${h}%" title="${weekLabel(s)}"></div></div><span>${i === 5 ? 'Agora' : '-' + (5 - i) + 's'}</span></div>`;
-    }).join('');
-    const chartLabel = weekStats.map((s, i) => `semana ${i + 1}: ${weekLabel(s)}`).join(', ');
-
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
@@ -926,11 +939,7 @@
         <div class="progress" role="progressbar" aria-label="Progresso na jornada" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>
         <ol class="phases">${phases.map((p) => `<li class="${current && p.id === current.id ? 'on' : ''}">${esc(p.name)}</li>`).join('')}</ol>
       </section>
-      <section class="card">
-        <h2>Bem-estar nas últimas semanas</h2>
-        <div class="bars" role="img" aria-label="${esc(chartLabel)}">${bars}</div>
-        <p class="muted small">Calculado a partir do humor que você registra no diário.</p>
-      </section>
+      ${moodChart(diary, 'Bem-estar nas últimas semanas', 'Calculado a partir do humor que você registra no diário.')}
       <section class="card">
         <h2>Metas combinadas</h2>
         ${goals.length ? `<ul class="checks">${goals.map((g) => `<li><label><input type="checkbox" data-goal="${g.id}"${g.done ? ' checked' : ''}><span>${esc(g.title)}</span></label></li>`).join('')}</ul>`
@@ -1236,6 +1245,7 @@
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
+    const moodDiary = await q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', pid).gte('created_at', new Date(Date.now() - 42 * DAY).toISOString()));
     const urls = await avatarUrls([p.avatar_path]);
     const [pterms, consents, wAcc, wEntries] = await Promise.all([
       q(sb.from('patient_terms').select('*').eq('patient_id', pid).maybeSingle()),
@@ -1308,6 +1318,7 @@
       ${wheelTherapistCard(wAcc, wEntries)}
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
+      ${moodChart(moodDiary, 'Bem-estar nas últimas semanas', 'Média do humor registrado pelo paciente no diário. Cada dia tem o mesmo peso, mesmo com vários registros.')}
       <h2 class="sec">Diário recente</h2>
       ${diary.length ? diary.map((e) => entryCard(e, !lastSessionAt || new Date(e.created_at) > lastSessionAt)).join('') : '<p class="muted">O paciente ainda não escreveu no diário.</p>'}
       <h2 class="sec">Sessões</h2>
