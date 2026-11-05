@@ -552,3 +552,20 @@ create policy wheel_therapist_read on public.wheel_entries for select to authent
 
 -- Faz o Supabase reconhecer as tabelas novas na hora
 notify pgrst, 'reload schema';
+
+-- ---------- Selo Novo (também em migracao-08-selo-novo.sql) ----------
+create table if not exists public.item_views (
+  patient_id  uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  kind        text not null check (kind in ('content', 'session')),
+  item_id     uuid not null,
+  viewed_at   timestamptz not null default now(),
+  primary key (patient_id, kind, item_id)
+);
+
+alter table public.item_views enable row level security;
+create policy views_self_insert on public.item_views for insert to authenticated with check (patient_id = auth.uid() and public.is_active());
+create policy views_self_read   on public.item_views for select to authenticated using (patient_id = auth.uid() and public.is_active());
+create policy views_therapist   on public.item_views for select to authenticated using (public.is_therapist());
+
+-- Faz o Supabase reconhecer a tabela nova na hora
+notify pgrst, 'reload schema';

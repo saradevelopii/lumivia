@@ -388,6 +388,44 @@
   const icon = (n, size) => `<svg width="${size || 22}" height="${size || 22}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
   const kindIcon = (k) => ({ video: 'play', audio: 'audio', pdf: 'file', link: 'link', exercicio: 'pen', texto: 'book' }[k] || 'book');
 
+  /* ================= selo "Novo" (o que o paciente já viu) ================= */
+  async function viewedSet(kind) {
+    const { data } = await sb.from('item_views').select('item_id').eq('patient_id', me.id).eq('kind', kind);
+    return new Set((data || []).map((v) => v.item_id));
+  }
+  async function markViewed(kind, ids) {
+    if (!me || me.role !== 'patient' || !ids.length) return;
+    await sb.from('item_views').upsert(ids.map((item_id) => ({ patient_id: me.id, kind, item_id })), { onConflict: 'patient_id,kind,item_id', ignoreDuplicates: true });
+  }
+  // Contador de novidades nas abas Conteúdos e Sessões
+  async function updateNavBadges() {
+    if (!me || me.role !== 'patient') return;
+    try {
+      const [contents, sessions, vc, vs] = await Promise.all([
+        sb.from('contents').select('id'),
+        sb.from('sessions').select('id').eq('patient_id', me.id),
+        viewedSet('content'), viewedSet('session')
+      ]);
+      const nc = (contents.data || []).filter((c) => !vc.has(c.id)).length;
+      const ns = (sessions.data || []).filter((s) => !vs.has(s.id)).length;
+      const put = (route, n) => {
+        const a = document.querySelector(`.nav a[href="#/${route}"]`);
+        if (!a) return;
+        const old = a.querySelector('.nav-badge');
+        if (old) old.remove();
+        if (n > 0) {
+          const b = document.createElement('span');
+          b.className = 'nav-badge';
+          b.textContent = n > 9 ? '9+' : String(n);
+          b.setAttribute('aria-label', `${n} ${n === 1 ? 'novo' : 'novos'}`);
+          a.appendChild(b);
+        }
+      };
+      put('conteudos', nc);
+      put('sessoes', ns);
+    } catch (e) { /* o selo é um extra: nunca atrapalha a tela */ }
+  }
+
   /* ================= estrutura ================= */
   function shell(content, active) {
     loadingView = false;
@@ -398,6 +436,7 @@
       <nav class="nav" aria-label="Navegação principal"><div class="nav-in" style="--n:${nav.length}">${nav.map(([r, l, i]) =>
         `<a href="#/${r}"${active === r ? ' aria-current="page"' : ''}>${icon(i)}<span>${l}</span></a>`).join('')}</div></nav>`;
     window.scrollTo(0, 0);
+    if (me.role === 'patient') updateNavBadges();
   }
   const loading = () => { $app.innerHTML = '<div class="loading" role="status">Carregando…</div>'; };
   const header = (title, sub, extra) => `<header class="hd"><div><h1>${esc(title)}</h1>${sub ? `<p class="muted">${esc(sub)}</p>` : ''}</div>${extra || ''}</header>`;
@@ -837,6 +876,7 @@
       q(sb.from('tool_access').select('released_at').eq('patient_id', me.id).eq('tool', 'roda').maybeSingle()),
       q(sb.from('wheel_entries').select('id').eq('patient_id', me.id).limit(1))
     ]);
+    const latestSeen = latest[0] ? (await viewedSet('content')).has(latest[0].id) : true;
     const wheelCard = wheelAcc ? `<a class="highlight wheel-hl" href="#/roda"><span class="hl-ico">${icon('wheel', 22)}</span>
         <span><span class="kicker-amber">${wheelAny.length ? 'SUA RODA DA VIDA' : 'EXERCÍCIO LIBERADO'}</span><strong>${wheelAny.length ? 'Ver sua roda e evolução' : 'Faça sua Roda da Vida'}</strong></span></a>` : '';
     const tState = termsState(terms, lastConsent[0]);
@@ -888,7 +928,7 @@
           : '<p class="muted">Suas metas aparecerão aqui depois da sessão.</p>'}
       </section>
       ${latest[0] ? `<a class="highlight" href="#/conteudo/${latest[0].id}"><span class="hl-ico">${icon(kindIcon(latest[0].kind), 20)}</span>
-        <span><span class="kicker-amber">CONTEÚDO MAIS RECENTE</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
+        <span><span class="kicker-amber">${latestSeen ? 'CONTEÚDO MAIS RECENTE' : 'NOVO CONTEÚDO PARA VOCÊ'}</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
       ${ther ? `<section class="card profile-row">${avatarHtml(ther, urls)}<div><p class="muted small">Sua terapeuta</p><strong>${esc(ther.full_name || '')}</strong></div></section>` : ''}`, 'inicio');
     bindChecks('data-goal', 'goals');
   }
@@ -947,11 +987,11 @@
     ]);
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const filters = [['todos', 'Todos'], ['video', 'Vídeos'], ['texto', 'Textos'], ['exercicio', 'Exercícios'], ['audio', 'Áudios'], ['pdf', 'PDFs']];
-    const recent = Date.now() - 7 * DAY;
+    const seen = await viewedSet('content');
     let filter = 'todos';
 
     const itemHtml = (c) => `<a class="item" href="#/conteudo/${c.id}"><span class="thumb">${icon(kindIcon(c.kind))}</span>
-      <span class="item-body">${new Date(c.created_at) > recent ? '<span class="badge">NOVO</span>' : ''}<strong>${esc(c.title)}</strong>
+      <span class="item-body">${!seen.has(c.id) ? '<span class="badge">NOVO</span>' : ''}<strong>${esc(c.title)}</strong>
       <span class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</span></span></a>`;
 
     function list() {
@@ -992,6 +1032,7 @@
       return;
     }
     const urls = await signedUrls([c.file_path]);
+    markViewed('content', [c.id]);
     const file = c.file_path ? urls[c.file_path] : '';
     const link = safeUrl(c.url);
     const yt = link && link.match(/(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/);
@@ -1074,6 +1115,8 @@
     const mats = ids.length ? await q(sb.from('session_materials').select('*').in('session_id', ids).order('created_at')) : [];
     const urls = await signedUrls(mats.map((m) => m.file_path));
     const total = sessions.length;
+    const seenS = await viewedSet('session');
+    const isNew = (s) => (!seenS.has(s.id) ? ' <span class="badge">NOVA</span>' : '');
 
     const body = (s) => `
       ${s.summary ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Resumo da terapeuta</h3><p class="prose">${esc(s.summary)}</p></div>` : ''}
@@ -1083,9 +1126,12 @@
     shell(`${header('Sessões', 'O que foi trabalhado em cada encontro')}
       ${!total ? '<p class="muted">Depois de cada sessão, o resumo e os materiais aparecerão aqui.</p>' : ''}
       ${sessions.map((s, i) => i === 0
-        ? `<section class="card"><span class="kicker-amber">ÚLTIMA SESSÃO</span><h2 style="font-family:Outfit,sans-serif;font-size:20px">Sessão ${total} · ${esc(fmtDate(s.session_date))}</h2>${body(s)}</section>
+        ? `<section class="card"><span class="kicker-amber">ÚLTIMA SESSÃO${isNew(s)}</span><h2 style="font-family:Outfit,sans-serif;font-size:20px">Sessão ${total} · ${esc(fmtDate(s.session_date))}</h2>${body(s)}</section>
            ${total > 1 ? '<h2 class="sec">Anteriores</h2>' : ''}`
-        : `<details class="card"><summary>Sessão ${total - i} · ${esc(fmtDate(s.session_date))}</summary>${body(s)}</details>`).join('')}`, 'sessoes');
+        : `<details class="card"><summary><span>Sessão ${total - i} · ${esc(fmtDate(s.session_date))}${isNew(s)}</span></summary>${body(s)}</details>`).join('')}`, 'sessoes');
+    // ao abrir a tela de Sessões, todas passam a contar como vistas (o selo some na próxima visita)
+    await markViewed('session', sessions.filter((s) => !seenS.has(s.id)).map((s) => s.id));
+    updateNavBadges();
   }
 
   /* ================= TERAPEUTA ================= */
@@ -1189,10 +1235,15 @@
       q(sb.from('wheel_entries').select('*').eq('patient_id', pid).order('created_at'))
     ]);
     const cs = consents[0] || null;
-    const [myAssigns, personalAll] = await Promise.all([
+    const [myAssigns, personalAll, pViews] = await Promise.all([
       q(sb.from('content_patients').select('content_id').eq('patient_id', pid)),
-      q(sb.from('contents').select('id,title,phase_id,respect_phase').eq('audience', 'selected').order('title'))
+      q(sb.from('contents').select('id,title,phase_id,respect_phase').eq('audience', 'selected').order('title')),
+      q(sb.from('item_views').select('kind,item_id,viewed_at').eq('patient_id', pid))
     ]);
+    const viewedAt = Object.fromEntries(pViews.map((v) => [v.kind + ':' + v.item_id, v.viewed_at]));
+    const seenTag = (kind, id) => viewedAt[kind + ':' + id]
+      ? `<span class="seen">✓ visto em ${esc(fmtDate(viewedAt[kind + ':' + id]))}</span>`
+      : '<span class="unseen">ainda não visto</span>';
     const assignedIds = new Set(myAssigns.map((a) => a.content_id));
     const phaseOf = Object.fromEntries(phases.map((ph) => [ph.id, ph]));
     const mine = personalAll.filter((c) => assignedIds.has(c.id));
@@ -1202,7 +1253,7 @@
         ${mine.length ? `<ul class="rows">${mine.map((c) => {
           const ph = phaseOf[c.phase_id];
           const waiting = c.respect_phase && !unlocked.has(c.phase_id);
-          return `<li><span><a href="#/conteudo/${c.id}" style="color:inherit">${esc(c.title)}</a><br><span class="muted small">Fase ${ph ? ph.position : '?'}${waiting ? ' · aguardando a liberação da fase' : ' · visível ao paciente'}</span></span>
+          return `<li><span><a href="#/conteudo/${c.id}" style="color:inherit">${esc(c.title)}</a><br><span class="muted small">Fase ${ph ? ph.position : '?'}${waiting ? ' · aguardando a liberação da fase' : ' · visível ao paciente · ' + seenTag('content', c.id)}</span></span>
             <button type="button" class="icon-btn" data-unassign="${c.id}" aria-label="Remover ${esc(c.title)} deste paciente">${icon('trash', 18)}</button></li>`;
         }).join('')}</ul>` : '<p class="muted small">Nenhum conteúdo personalizado para este paciente.</p>'}
         ${available.length ? `<form id="assignf" class="inline"><label class="sr" for="assignsel">Adicionar conteúdo personalizado</label>
@@ -1251,7 +1302,7 @@
       <h2 class="sec">Diário recente</h2>
       ${diary.length ? diary.map((e) => entryCard(e, !lastSessionAt || new Date(e.created_at) > lastSessionAt)).join('') : '<p class="muted">O paciente ainda não escreveu no diário.</p>'}
       <h2 class="sec">Sessões</h2>
-      ${sessions.length ? sessions.map((s) => `<details class="card"><summary>${esc(fmtDate(s.session_date))}</summary>
+      ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
           ${s.summary ? `<h3 class="sub-h">Resumo</h3><p class="prose">${esc(s.summary)}</p>` : ''}
           ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>` : ''}
           ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3><p class="prose">${esc(noteBy[s.id])}</p>` : ''}

@@ -360,3 +360,10 @@ details.card[open] > summary::after { content: "–"; }
   .card { break-inside: avoid; border: 1px solid #E1E7E3; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ---------- selo Novo ---------- */
+.nav a { position: relative; }
+.nav-badge { position: absolute; top: 8px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #B4471F; color: #FFFFFF; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.kicker-amber .badge, summary .badge { margin-left: 6px; vertical-align: middle; }
+.seen { color: var(--brand); font-weight: 500; }
+.unseen { color: var(--amber); font-weight: 500; }
