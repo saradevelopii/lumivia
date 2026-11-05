@@ -382,7 +382,8 @@
     back: '<path d="M15 18l-6-6 6-6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
-    check: '<path d="M5 12l5 5L20 7"/>'
+    check: '<path d="M5 12l5 5L20 7"/>',
+    wheel: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/>'
   };
   const icon = (n, size) => `<svg width="${size || 22}" height="${size || 22}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
   const kindIcon = (k) => ({ video: 'play', audio: 'audio', pdf: 'file', link: 'link', exercicio: 'pen', texto: 'book' }[k] || 'book');
@@ -517,11 +518,155 @@
     });
   }
 
+  /* ================= RODA DA VIDA ================= */
+  const WHEEL_GROUPS = [
+    { key: 'pessoal', label: 'Pessoal', color: '#2F6B5E' },
+    { key: 'profissional', label: 'Profissional', color: '#B7791F' },
+    { key: 'relacoes', label: 'Relacionamentos', color: '#3F6FA0' },
+    { key: 'qualidade', label: 'Qualidade de vida', color: '#7E57A0' }
+  ];
+  const WHEEL_AREAS = [
+    { key: 'saude', label: 'Saúde e disposição', short: 'Saúde', group: 'pessoal' },
+    { key: 'intelecto', label: 'Desenvolvimento intelectual', short: 'Intelecto', group: 'pessoal' },
+    { key: 'emocional', label: 'Equilíbrio emocional', short: 'Emocional', group: 'pessoal' },
+    { key: 'proposito', label: 'Realização e propósito', short: 'Propósito', group: 'profissional' },
+    { key: 'financas', label: 'Recursos financeiros', short: 'Finanças', group: 'profissional' },
+    { key: 'contribuicao', label: 'Contribuição social', short: 'Contribuição', group: 'profissional' },
+    { key: 'familia', label: 'Família', short: 'Família', group: 'relacoes' },
+    { key: 'amor', label: 'Vida amorosa', short: 'Amor', group: 'relacoes' },
+    { key: 'social', label: 'Vida social', short: 'Social', group: 'relacoes' },
+    { key: 'diversao', label: 'Diversão e hobbies', short: 'Diversão', group: 'qualidade' },
+    { key: 'felicidade', label: 'Plenitude e felicidade', short: 'Felicidade', group: 'qualidade' },
+    { key: 'espiritualidade', label: 'Espiritualidade', short: 'Espiritualidade', group: 'qualidade' }
+  ];
+  const areaLabel = (k) => (WHEEL_AREAS.find((a) => a.key === k) || { label: k }).label;
+  const groupColor = (g) => (WHEEL_GROUPS.find((x) => x.key === g) || {}).color || '#2F6B5E';
+
+  // Desenha a roda: cada fatia é preenchida do centro até a nota; a linha tracejada é a roda de comparação
+  function wheelSvg(scores, compare) {
+    const W = 600, H = 440, cx = W / 2, cy = H / 2, R = 150, n = WHEEL_AREAS.length, step = (Math.PI * 2) / n;
+    const pt = (r, a) => [(cx + r * Math.cos(a)).toFixed(1), (cy + r * Math.sin(a)).toFixed(1)];
+    const desc = WHEEL_AREAS.map((a) => `${a.label}: ${scores[a.key] ?? 'sem nota'}`).join(', ');
+    let s = `<svg viewBox="0 0 ${W} ${H}" class="wheel" role="img" aria-label="Roda da Vida. ${esc(desc)}">`;
+    for (let k = 2; k <= 10; k += 2) s += `<circle cx="${cx}" cy="${cy}" r="${(R * k) / 10}" fill="none" stroke="#DDE4E0" stroke-width="${k === 10 ? 1.5 : 1}"/>`;
+    WHEEL_AREAS.forEach((a, i) => {
+      const a0 = -Math.PI / 2 + i * step, a1 = a0 + step;
+      const [sx, sy] = pt(R, a0);
+      s += `<line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="#DDE4E0"/>`;
+      const v = Number(scores[a.key] ?? 0);
+      if (v > 0) {
+        const r = (R * v) / 10, [x0, y0] = pt(r, a0 + 0.012), [x1, y1] = pt(r, a1 - 0.012);
+        s += `<path d="M${cx},${cy} L${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1} Z" fill="${groupColor(a.group)}" fill-opacity="0.82"/>`;
+      }
+      if (compare && compare[a.key] != null && Number(compare[a.key]) > 0) {
+        const r = (R * Number(compare[a.key])) / 10, [x0, y0] = pt(r, a0 + 0.03), [x1, y1] = pt(r, a1 - 0.03);
+        s += `<path d="M${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1}" fill="none" stroke="#1F2A24" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round"/>`;
+      }
+      const am = a0 + step / 2, c = Math.cos(am), [lx, ly] = pt(R + (Math.abs(c) < 0.5 ? 22 : 16), am);
+      const anchor = Math.abs(c) < 0.05 ? 'middle' : c > 0 ? 'start' : 'end';
+      s += `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="middle" font-size="15" fill="#3E4A44" font-family="Inter, sans-serif">${esc(a.short)} <tspan font-weight="700" fill="${groupColor(a.group)}">${scores[a.key] ?? '–'}</tspan></text>`;
+    });
+    return s + '</svg>';
+  }
+  const wheelLegend = (compareDate) => `<div class="wheel-legend">${WHEEL_GROUPS.map((g) => `<span><i style="background:${g.color}"></i>${g.label}</span>`).join('')}
+      ${compareDate ? `<span><i class="dash"></i>Primeira roda (${esc(fmtDate(compareDate))})</span>` : ''}</div>`;
+
+  function wheelChanges(first, last) {
+    const rows = WHEEL_AREAS.map((a) => ({ a, f: Number(first.scores[a.key] ?? 0), l: Number(last.scores[a.key] ?? 0) }))
+      .map((r) => ({ ...r, d: r.l - r.f }));
+    return `<table class="wheel-table"><thead><tr><th scope="col">Área</th><th scope="col">Primeira</th><th scope="col">Atual</th><th scope="col">Mudança</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td>${esc(r.a.label)}</td><td>${r.f}</td><td>${r.l}</td><td class="${r.d > 0 ? 'up' : r.d < 0 ? 'down' : ''}">${r.d > 0 ? '▲ +' + r.d : r.d < 0 ? '▼ ' + r.d : '='}</td></tr>`).join('')}
+    </tbody></table>`;
+  }
+
+  // Paciente: preencher e acompanhar a própria Roda da Vida
+  async function viewWheel() {
+    loading();
+    const [acc, entries] = await Promise.all([
+      q(sb.from('tool_access').select('released_at').eq('patient_id', me.id).eq('tool', 'roda').maybeSingle()),
+      q(sb.from('wheel_entries').select('*').eq('patient_id', me.id).order('created_at'))
+    ]);
+    const back = `<a class="back-l" href="#/inicio">${icon('back', 18)}Início</a>`;
+    if (!acc) {
+      shell(`${back}${header('Roda da Vida', '')}<section class="card"><p>Sua terapeuta vai liberar este exercício no momento certo da sua jornada.</p></section>`, 'inicio');
+      return;
+    }
+    const first = entries[0], last = entries[entries.length - 1];
+    const compare = entries.length > 1 ? first : null;
+
+    const showResult = () => {
+      shell(`${back}${header('Roda da Vida', `Preenchida em ${fmtDate(last.created_at)}${entries.length > 1 ? ` · ${entries.length} vezes até agora` : ''}`)}
+        <section class="card">${wheelSvg(last.scores, compare && compare.scores)}${wheelLegend(compare && compare.created_at)}</section>
+        ${last.focus ? `<section class="card"><p class="muted small">Área para cuidar primeiro</p><h2>${esc(areaLabel(last.focus))}</h2>${last.reflection ? `<p class="prose">${esc(last.reflection)}</p>` : ''}</section>` : ''}
+        ${compare ? `<section class="card"><h2>Sua evolução</h2>${wheelChanges(first, last)}</section>` : ''}
+        <button class="btn" type="button" id="redo">Refazer a Roda da Vida</button>
+        <p class="muted small">Refazer não apaga as anteriores: elas ficam guardadas para você acompanhar sua evolução.</p>`, 'inicio');
+      $('#redo').addEventListener('click', showForm);
+    };
+
+    const showForm = () => {
+      const scores = {};
+      WHEEL_AREAS.forEach((a) => { scores[a.key] = last ? Number(last.scores[a.key] ?? 5) : 5; });
+      shell(`${back}${header('Roda da Vida', 'Como está cada área da sua vida hoje?')}
+        <section class="card"><p>Dê uma nota de <strong>0 a 10</strong> para o quanto você está satisfeita(o) hoje com cada área. Não existe resposta certa: vale a primeira sensação.</p></section>
+        <section class="card wheel-live" id="wheelbox">${wheelSvg(scores, compare && compare.scores)}</section>
+        <form id="wf" class="stack">
+          ${WHEEL_GROUPS.map((g) => `<fieldset class="card wheel-group" style="--gc:${g.color}">
+            <legend><i style="background:${g.color}"></i>${g.label}</legend>
+            ${WHEEL_AREAS.filter((a) => a.group === g.key).map((a) => `<div class="slider">
+              <label for="w-${a.key}">${esc(a.label)}</label><output id="o-${a.key}" for="w-${a.key}">${scores[a.key]}</output>
+              <input type="range" id="w-${a.key}" data-area="${a.key}" min="0" max="10" step="1" value="${scores[a.key]}">
+            </div>`).join('')}
+          </fieldset>`).join('')}
+          <section class="card">
+            ${field('wfocus', 'Qual área você quer cuidar primeiro?', `<select id="wfocus"><option value="">Escolha uma área</option>${WHEEL_AREAS.map((a) => `<option value="${a.key}">${esc(a.label)}</option>`).join('')}</select>`)}
+            ${field('wrefl', 'O que você percebeu ao olhar para a sua roda? (opcional)', '<textarea id="wrefl" rows="4"></textarea>')}
+          </section>
+          <button class="btn" type="submit">Salvar minha Roda da Vida</button>
+          ${last ? '<button class="btn ghost" type="button" id="wcancel">Cancelar</button>' : ''}
+        </form>`, 'inicio');
+      $$('[data-area]').forEach((inp) => inp.addEventListener('input', () => {
+        scores[inp.dataset.area] = Number(inp.value);
+        $('#o-' + inp.dataset.area).textContent = inp.value;
+        $('#wheelbox').innerHTML = wheelSvg(scores, compare && compare.scores);
+      }));
+      if ($('#wcancel')) $('#wcancel').addEventListener('click', showResult);
+      $('#wf').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = $('#wf button[type=submit]');
+        btn.disabled = true;
+        try {
+          await q(sb.from('wheel_entries').insert({ patient_id: me.id, scores, focus: $('#wfocus').value || null, reflection: $('#wrefl').value.trim() || null }));
+          toast('Roda da Vida salva.');
+          viewWheel();
+        } catch (err) { btn.disabled = false; }
+      });
+    };
+
+    if (last) showResult(); else showForm();
+  }
+
+  // Terapeuta: tópico Roda da Vida na ficha
+  function wheelTherapistCard(acc, entries) {
+    const first = entries[0], last = entries[entries.length - 1];
+    return `<section class="card">
+      <div class="term-row"><h2>Roda da Vida</h2>
+        <span class="status ${acc ? 'ok' : 'pending'}">${acc ? icon('check', 16) + 'Liberada' : 'Não liberada'}</span></div>
+      ${!acc ? '<p class="muted small">Libere quando for o momento: o paciente verá o exercício na tela de Início.</p><button type="button" class="btn sm" id="wheel-release">Liberar Roda da Vida</button>'
+        : `<p class="muted small">Liberada em ${esc(fmtDate(acc.released_at))}. ${entries.length ? `Preenchida ${entries.length} ${entries.length === 1 ? 'vez' : 'vezes'}: ${entries.map((e) => esc(fmtDate(e.created_at))).join(', ')}.` : 'O paciente ainda não preencheu.'}</p>`}
+      ${last ? `${wheelSvg(last.scores, entries.length > 1 ? first.scores : null)}${wheelLegend(entries.length > 1 ? first.created_at : null)}
+        ${last.focus ? `<p><span class="muted small">Área para cuidar primeiro:</span> <strong>${esc(areaLabel(last.focus))}</strong></p>` : ''}
+        ${last.reflection ? `<p class="prose">${esc(last.reflection)}</p>` : ''}
+        ${entries.length > 1 ? `<details><summary class="sub-h" style="cursor:pointer">Comparar primeira e atual</summary>${wheelChanges(first, last)}</details>` : ''}` : ''}
+      ${acc ? '<button type="button" class="btn-link" id="wheel-revoke">Remover acesso do paciente</button>' : ''}
+    </section>`;
+  }
+
   /* ================= PACIENTE ================= */
   async function viewHome() {
     loading();
     const since = new Date(Date.now() - 42 * DAY).toISOString();
-    const [phases, unlocks, goals, diary, latest, therapists, terms, lastConsent] = await Promise.all([
+    const [phases, unlocks, goals, diary, latest, therapists, terms, lastConsent, wheelAcc, wheelAny] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
       q(sb.from('goals').select('*').eq('patient_id', me.id).order('created_at')),
@@ -529,8 +674,12 @@
       q(sb.from('contents').select('id,title,kind').order('created_at', { ascending: false }).limit(1)),
       q(sb.from('profiles').select('id,full_name,avatar_path').eq('role', 'therapist').limit(1)),
       q(sb.from('patient_terms').select('*').eq('patient_id', me.id).maybeSingle()),
-      q(sb.from('consents').select('version,accepted_at').eq('patient_id', me.id).order('accepted_at', { ascending: false }).limit(1))
+      q(sb.from('consents').select('version,accepted_at').eq('patient_id', me.id).order('accepted_at', { ascending: false }).limit(1)),
+      q(sb.from('tool_access').select('released_at').eq('patient_id', me.id).eq('tool', 'roda').maybeSingle()),
+      q(sb.from('wheel_entries').select('id').eq('patient_id', me.id).limit(1))
     ]);
+    const wheelCard = wheelAcc ? `<a class="highlight wheel-hl" href="#/roda"><span class="hl-ico">${icon('wheel', 22)}</span>
+        <span><span class="kicker-amber">${wheelAny.length ? 'SUA RODA DA VIDA' : 'EXERCÍCIO LIBERADO'}</span><strong>${wheelAny.length ? 'Ver sua roda e evolução' : 'Faça sua Roda da Vida'}</strong></span></a>` : '';
     const tState = termsState(terms, lastConsent[0]);
     const consentCard = (tState.key === 'pending' || tState.key === 'changed') ? `<section class="card consent">
         <span class="kicker-amber">${tState.key === 'changed' ? 'ACORDOS ATUALIZADOS' : 'ANTES DE COMEÇAR'}</span>
@@ -562,6 +711,7 @@
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
+      ${wheelCard}
       <section class="journey">
         <div class="row-between"><span class="kicker">Sua jornada</span><span class="kicker">${current ? `Fase ${current.position} de ${phases.length}` : ''}</span></div>
         <h2>${esc(current ? current.name : 'Sua jornada vai começar em breve')}</h2>
@@ -873,9 +1023,11 @@
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const urls = await avatarUrls([p.avatar_path]);
-    const [pterms, consents] = await Promise.all([
+    const [pterms, consents, wAcc, wEntries] = await Promise.all([
       q(sb.from('patient_terms').select('*').eq('patient_id', pid).maybeSingle()),
-      q(sb.from('consents').select('*').eq('patient_id', pid).order('accepted_at', { ascending: false }).limit(1))
+      q(sb.from('consents').select('*').eq('patient_id', pid).order('accepted_at', { ascending: false }).limit(1)),
+      q(sb.from('tool_access').select('released_at').eq('patient_id', pid).eq('tool', 'roda').maybeSingle()),
+      q(sb.from('wheel_entries').select('*').eq('patient_id', pid).order('created_at'))
     ]);
     const cs = consents[0] || null;
     const [myAssigns, personalAll] = await Promise.all([
@@ -934,6 +1086,7 @@
           <button type="button" class="toggle" data-phase="${ph.id}" aria-pressed="${on}">${on ? 'Liberada' : 'Liberar'}</button></div>`; }).join('')}
       </section>
       ${personalCard}
+      ${wheelTherapistCard(wAcc, wEntries)}
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
       <h2 class="sec">Diário recente</h2>
@@ -957,6 +1110,13 @@
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     bindReceipt(cs, p);
     bindTermsForm(pid, () => viewPatient(pid));
+    if ($('#wheel-release')) $('#wheel-release').addEventListener('click', async () => {
+      try { await q(sb.from('tool_access').insert({ patient_id: pid, tool: 'roda' })); toast('Roda da Vida liberada para o paciente.'); viewPatient(pid); } catch (err) { /* toast */ }
+    });
+    if ($('#wheel-revoke')) $('#wheel-revoke').addEventListener('click', async () => {
+      if (!confirm('Remover o acesso do paciente à Roda da Vida? As rodas já preenchidas continuam guardadas.')) return;
+      try { await q(sb.from('tool_access').delete().eq('patient_id', pid).eq('tool', 'roda')); viewPatient(pid); } catch (err) { /* toast */ }
+    });
     if ($('#assignf')) $('#assignf').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await q(sb.from('content_patients').insert({ content_id: $('#assignsel').value, patient_id: pid })); toast('Conteúdo adicionado para o paciente.'); viewPatient(pid); } catch (err) { /* toast */ }
@@ -1323,6 +1483,7 @@
         return await viewPatients();
       }
       if (h === '#/acordos') return await viewTerms();
+      if (h === '#/roda') return await viewWheel();
       if (h === '#/conteudos') return await viewContents();
       if (h === '#/diario') return await viewDiary();
       if (h === '#/sessoes') return await viewSessions();
