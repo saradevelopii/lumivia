@@ -114,6 +114,16 @@ p { margin: 0; }
 .term-meta dd { margin: 0; text-align: right; font-weight: 500; }
 .card .btn.sm { align-self: flex-start; }
 
+.audience { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.audience legend { padding: 0 6px; }
+.audience input[type=radio] { width: 20px; height: 20px; accent-color: var(--brand); flex-shrink: 0; }
+.selbox { margin: 4px 0 0 32px; display: flex; flex-direction: column; }
+.selbox[hidden] { display: none; }
+.selbox .respect { margin-top: 6px; border-top: 1px solid #EEF1EE; padding-top: 6px; }
+.badge.personal { background: var(--brand-l); color: var(--brand-d); }
+.for-you { display: flex; flex-direction: column; gap: 12px; background: var(--amber-bg); border-radius: 20px; padding: 14px; }
+.rows li > span a { text-decoration: none; font-weight: 500; }
+
 /* ---------- navegação inferior ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0;

@@ -443,7 +443,7 @@
     const [phases, unlocks, contents] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
-      q(sb.from('contents').select('id,phase_id,kind,title,duration,created_at').order('created_at'))
+      q(sb.from('contents').select('id,phase_id,kind,title,duration,created_at,audience').order('created_at'))
     ]);
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const filters = [['todos', 'Todos'], ['video', 'Vídeos'], ['texto', 'Textos'], ['exercicio', 'Exercícios'], ['audio', 'Áudios'], ['pdf', 'PDFs']];
@@ -457,11 +457,14 @@
     function list() {
       const open = phases.filter((p) => unlocked.has(p.id)).reverse();
       const locked = phases.filter((p) => !unlocked.has(p.id));
-      let html = open.map((p) => {
-        const items = contents.filter((c) => c.phase_id === p.id && (filter === 'todos' || c.kind === filter));
+      const ok = (c) => filter === 'todos' || c.kind === filter;
+      const personal = contents.filter((c) => c.audience === 'selected' && ok(c)).reverse();
+      let html = personal.length ? `<section class="for-you"><h2 class="sec" style="margin:0;color:var(--amber)">Escolhidos para você</h2>${personal.map(itemHtml).join('')}</section>` : '';
+      html += open.map((p) => {
+        const items = contents.filter((c) => c.phase_id === p.id && c.audience !== 'selected' && ok(c));
         return `<h2 class="sec">Fase ${p.position} · ${esc(p.name)}</h2>${items.length ? items.map(itemHtml).join('') : '<p class="muted small">Nada deste tipo nesta fase ainda.</p>'}`;
       }).join('');
-      if (!open.length) html = '<p class="muted">Seus conteúdos aparecerão aqui quando forem liberados.</p>';
+      if (!open.length && !personal.length) html = '<p class="muted">Seus conteúdos aparecerão aqui quando forem liberados.</p>';
       if (locked.length) {
         html += '<h2 class="sec">Próximas fases</h2>' + locked.map((p) => `<div class="item locked"><span class="thumb">${icon('lock')}</span>
           <span class="item-body"><strong>${esc(p.name)}</strong><span class="muted small">Será liberada pela sua terapeuta</span></span></div>`).join('');
@@ -654,6 +657,27 @@
     const urls = await avatarUrls([p.avatar_path]);
     const consents = await q(sb.from('consents').select('*').eq('patient_id', pid).eq('version', CONSENT_VERSION).limit(1));
     const cs = consents[0];
+    const [myAssigns, personalAll] = await Promise.all([
+      q(sb.from('content_patients').select('content_id').eq('patient_id', pid)),
+      q(sb.from('contents').select('id,title,phase_id,respect_phase').eq('audience', 'selected').order('title'))
+    ]);
+    const assignedIds = new Set(myAssigns.map((a) => a.content_id));
+    const phaseOf = Object.fromEntries(phases.map((ph) => [ph.id, ph]));
+    const mine = personalAll.filter((c) => assignedIds.has(c.id));
+    const available = personalAll.filter((c) => !assignedIds.has(c.id));
+    const personalCard = `<section class="card">
+        <h2>Conteúdos personalizados</h2>
+        ${mine.length ? `<ul class="rows">${mine.map((c) => {
+          const ph = phaseOf[c.phase_id];
+          const waiting = c.respect_phase && !unlocked.has(c.phase_id);
+          return `<li><span><a href="#/conteudo/${c.id}" style="color:inherit">${esc(c.title)}</a><br><span class="muted small">Fase ${ph ? ph.position : '?'}${waiting ? ' · aguardando a liberação da fase' : ' · visível ao paciente'}</span></span>
+            <button type="button" class="icon-btn" data-unassign="${c.id}" aria-label="Remover ${esc(c.title)} deste paciente">${icon('trash', 18)}</button></li>`;
+        }).join('')}</ul>` : '<p class="muted small">Nenhum conteúdo personalizado para este paciente.</p>'}
+        ${available.length ? `<form id="assignf" class="inline"><label class="sr" for="assignsel">Adicionar conteúdo personalizado</label>
+            <select id="assignsel">${available.map((c) => `<option value="${c.id}">${esc(c.title)} (fase ${phaseOf[c.phase_id] ? phaseOf[c.phase_id].position : '?'})</option>`).join('')}</select>
+            <button class="btn sm" type="submit">Adicionar</button></form>` : ''}
+        <p class="muted small">Para criar um novo, vá à Biblioteca e escolha “Só pacientes escolhidos”.</p>
+      </section>`;
 
     const listRows = (items, table, label) => `${items.length ? `<ul class="rows">${items.map((it) => `<li><span class="${it.done ? 'done' : ''}">${esc(it.title)}</span>
         <button type="button" class="icon-btn" data-del="${table}:${it.id}" aria-label="Remover ${label}: ${esc(it.title)}">${icon('trash', 18)}</button></li>`).join('')}</ul>` : `<p class="muted small">Nenhuma ${label} ainda.</p>`}
@@ -675,6 +699,7 @@
           <span class="muted small">${on ? 'Visível ao paciente' : 'Bloqueada'}</span></div>
           <button type="button" class="toggle" data-phase="${ph.id}" aria-pressed="${on}">${on ? 'Liberada' : 'Liberar'}</button></div>`; }).join('')}
       </section>
+      ${personalCard}
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
       <h2 class="sec">Diário recente</h2>
@@ -689,6 +714,14 @@
 
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     bindReceipt(cs, p);
+    if ($('#assignf')) $('#assignf').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await q(sb.from('content_patients').insert({ content_id: $('#assignsel').value, patient_id: pid })); toast('Conteúdo adicionado para o paciente.'); viewPatient(pid); } catch (err) { /* toast */ }
+    });
+    $$('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Remover este conteúdo deste paciente?')) return;
+      try { await q(sb.from('content_patients').delete().eq('content_id', b.dataset.unassign).eq('patient_id', pid)); viewPatient(pid); } catch (err) { /* toast */ }
+    }));
     $('#nf').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await q(sb.from('profiles').update({ full_name: $('#pname').value.trim() || null }).eq('id', pid)); toast('Nome salvo.'); viewPatient(pid); } catch (err) { /* toast */ }
@@ -804,8 +837,12 @@
   }
 
   /* --- formulário de conteúdo (novo e edição) --- */
-  function contentFields(phases, c) {
+  function contentFields(phases, c, patients, assigned) {
     c = c || {};
+    patients = patients || [];
+    assigned = assigned || new Set();
+    const aud = c.audience || 'phase';
+    const respect = c.respect_phase !== false;
     const sel = (a, b) => (String(a) === String(b) ? ' selected' : '');
     const fileName = c.file_path ? c.file_path.split('/').pop().replace(/^[0-9a-f-]{36}-/i, '') : '';
     return `
@@ -817,7 +854,31 @@
       ${field('curl', 'Link (opcional) — YouTube, site, Google Drive…', `<input id="curl" type="url" value="${esc(c.url || '')}" placeholder="https://…">`)}
       ${c.file_path ? `<div class="mat">${icon('file', 20)}<span>Arquivo atual: ${esc(fileName)}</span></div>
         <label class="check-line"><input type="checkbox" id="cremove"> Remover o arquivo atual</label>` : ''}
-      ${field('cfile', c.file_path ? 'Substituir por outro arquivo (opcional · até 50 MB)' : 'Arquivo (opcional · até 50 MB)', '<input id="cfile" type="file">')}`;
+      ${field('cfile', c.file_path ? 'Substituir por outro arquivo (opcional · até 50 MB)' : 'Arquivo (opcional · até 50 MB)', '<input id="cfile" type="file">')}
+      <fieldset class="audience">
+        <legend>Quem pode ver</legend>
+        <label class="check-line"><input type="radio" name="aud" value="phase"${aud === 'phase' ? ' checked' : ''}> Todos os pacientes com esta fase liberada</label>
+        <label class="check-line"><input type="radio" name="aud" value="selected"${aud === 'selected' ? ' checked' : ''}> Só pacientes escolhidos (personalizado)</label>
+        <div id="selbox" class="selbox"${aud === 'selected' ? '' : ' hidden'}>
+          ${patients.length ? patients.map((p) => `<label class="check-line"><input type="checkbox" name="pt" value="${p.id}"${assigned.has(p.id) ? ' checked' : ''}> ${esc(p.full_name || p.email)}</label>`).join('')
+            : '<p class="muted small">Nenhum paciente cadastrado ainda.</p>'}
+          <label class="check-line respect"><input type="checkbox" id="respect"${respect ? ' checked' : ''}> Mostrar só quando esta fase estiver liberada para o paciente</label>
+          <p class="muted small">Desmarcado, o conteúdo aparece para o paciente assim que você salvar.</p>
+        </div>
+      </fieldset>`;
+  }
+
+  function bindAudience() {
+    $$('input[name=aud]').forEach((r) => r.addEventListener('change', () => {
+      $('#selbox').hidden = $('input[name=aud]:checked').value !== 'selected';
+    }));
+  }
+
+  async function syncAssignments(contentId, audience, selected) {
+    await q(sb.from('content_patients').delete().eq('content_id', contentId));
+    if (audience === 'selected' && selected.length) {
+      await q(sb.from('content_patients').insert(selected.map((patient_id) => ({ content_id: contentId, patient_id }))));
+    }
   }
 
   function readContentForm() {
@@ -829,32 +890,40 @@
     if (rawUrl && !url) { toast('O link precisa começar com https://', true); return null; }
     if (file && file.size > 50 * 1024 * 1024) { toast('Arquivo acima de 50 MB. Para vídeos, use o YouTube não listado.', true); return null; }
     const phase_id = Number($('#cphase').value);
+    const audience = $('input[name=aud]:checked').value;
+    const selected = $$('input[name=pt]:checked').map((i) => i.value);
+    if (audience === 'selected' && !selected.length) { toast('Escolha pelo menos um paciente para o conteúdo personalizado.', true); return null; }
     return {
-      phase_id, file, remove: !!($('#cremove') && $('#cremove').checked),
+      phase_id, file, remove: !!($('#cremove') && $('#cremove').checked), audience, selected,
       row: {
         phase_id, kind: $('#ckind').value, title,
         duration: $('#cdur').value.trim() || null,
         body: $('#cbody').value.trim() || null,
-        url: url || null
+        url: url || null,
+        audience,
+        respect_phase: audience === 'selected' ? $('#respect').checked : true
       }
     };
   }
 
   async function viewEditContent(id) {
     loading();
-    const [c, phases] = await Promise.all([
+    const [c, phases, patients, assigns] = await Promise.all([
       q(sb.from('contents').select('*').eq('id', id).maybeSingle()),
-      q(sb.from('phases').select('*').order('position'))
+      q(sb.from('phases').select('*').order('position')),
+      q(sb.from('profiles').select('id,full_name,email').eq('role', 'patient').order('full_name')),
+      q(sb.from('content_patients').select('patient_id').eq('content_id', id))
     ]);
     if (!c) { toast('Conteúdo não encontrado.', true); go('#/biblioteca'); return; }
 
     shell(`<a class="back-l" href="#/biblioteca">${icon('back', 18)}Biblioteca</a>
       ${header('Editar conteúdo', 'As mudanças aparecem na hora para os pacientes')}
       <form id="ef" class="card stack">
-        ${contentFields(phases, c)}
+        ${contentFields(phases, c, patients, new Set(assigns.map((a) => a.patient_id)))}
         <button class="btn" type="submit">Salvar alterações</button>
         <a class="btn ghost" href="#/conteudo/${c.id}">Ver como o paciente vê</a>
       </form>`, 'biblioteca');
+    bindAudience();
 
     $('#ef').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -877,6 +946,7 @@
           if (error) { toast(traduzErro(error.message), true); throw error; }
         }
         await q(sb.from('contents').update({ ...v.row, file_path }).eq('id', c.id));
+        await syncAssignments(c.id, v.audience, v.selected);
         if (old && old !== file_path) await sb.storage.from(BUCKET).remove([old]);
         toast('Conteúdo atualizado.');
         go('#/biblioteca');
@@ -886,16 +956,25 @@
 
   async function viewLibrary() {
     loading();
-    const [phases, contents] = await Promise.all([
+    const [phases, contents, patients, assigns] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
-      q(sb.from('contents').select('*').order('created_at'))
+      q(sb.from('contents').select('*').order('created_at')),
+      q(sb.from('profiles').select('id,full_name,email').eq('role', 'patient').order('full_name')),
+      q(sb.from('content_patients').select('content_id'))
     ]);
+    const countBy = {};
+    assigns.forEach((a) => { countBy[a.content_id] = (countBy[a.content_id] || 0) + 1; });
+    const audBadge = (c) => {
+      if (c.audience !== 'selected') return '';
+      const n = countBy[c.id] || 0;
+      return `<span class="badge personal">Personalizado · ${n} ${n === 1 ? 'paciente' : 'pacientes'}${c.respect_phase ? '' : ' · já liberado'}</span>`;
+    };
 
     shell(`${header('Biblioteca', 'Conteúdos de cada fase da jornada')}
       <details class="card" ${contents.length ? '' : 'open'}>
         <summary>+ Novo conteúdo</summary>
         <form id="cf" class="stack">
-          ${contentFields(phases, null)}
+          ${contentFields(phases, null, patients)}
           <button class="btn" type="submit">Adicionar à biblioteca</button>
         </form>
       </details>
@@ -904,7 +983,7 @@
         return `<div class="row-between" style="margin-top:6px"><h2 class="sec" style="margin:0">Fase ${p.position} · ${esc(p.name)}</h2>
             <button type="button" class="btn-link" data-rename="${p.id}" aria-label="Renomear fase ${esc(p.name)}">Renomear</button></div>
           ${items.length ? items.map((c) => `<div class="item"><a class="thumb" href="#/conteudo/${c.id}" aria-label="Ver ${esc(c.title)}">${icon(kindIcon(c.kind))}</a>
-            <a class="item-body" href="#/conteudo/${c.id}" style="text-decoration:none;color:inherit"><strong>${esc(c.title)}</strong><span class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</span></a>
+            <a class="item-body" href="#/conteudo/${c.id}" style="text-decoration:none;color:inherit">${audBadge(c)}<strong>${esc(c.title)}</strong><span class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</span></a>
             <a class="icon-btn edit" href="#/biblioteca/editar/${c.id}" aria-label="Editar ${esc(c.title)}">${icon('pen', 18)}</a>
             <button type="button" class="icon-btn" data-delc="${c.id}" aria-label="Apagar ${esc(c.title)}">${icon('trash', 18)}</button></div>`).join('')
             : '<p class="muted small">Nenhum conteúdo nesta fase.</p>'}`;
@@ -913,6 +992,7 @@
         <h2>Nova fase</h2>
         <div class="inline"><label class="sr" for="pnew">Nome da nova fase</label><input id="pnew" type="text" placeholder="Nome da fase" required><button class="btn sm" type="submit">Criar</button></div>
       </form>`, 'biblioteca');
+    bindAudience();
 
     $('#cf').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -923,7 +1003,8 @@
       btn.textContent = v.file ? 'Enviando arquivo…' : 'Salvando…';
       try {
         const file_path = v.file ? await upload(`conteudos/${v.phase_id}/${uuid()}-${cleanName(v.file.name)}`, v.file) : null;
-        await q(sb.from('contents').insert({ ...v.row, file_path }));
+        const created = await q(sb.from('contents').insert({ ...v.row, file_path }).select('id').single());
+        await syncAssignments(created.id, v.audience, v.selected);
         toast('Conteúdo adicionado.');
         viewLibrary();
       } catch (err) { btn.disabled = false; btn.textContent = 'Adicionar à biblioteca'; }
