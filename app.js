@@ -893,19 +893,28 @@
     const current = opened[opened.length - 1];
     const pct = phases.length ? Math.round((opened.length / phases.length) * 100) : 0;
 
-    const weeks = Array.from({ length: 6 }, () => []);
+    // Bem-estar por semana: primeiro a média de cada dia, depois a média dos dias.
+    // Assim, vários registros no mesmo dia não pesam mais do que um dia com um registro só.
+    const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`; };
+    const weeks = Array.from({ length: 6 }, () => new Map());
     diary.forEach((d) => {
       if (d.mood == null) return;
       const w = Math.floor((Date.now() - new Date(d.created_at)) / (7 * DAY));
-      if (w >= 0 && w < 6) weeks[5 - w].push(d.mood);
+      if (w < 0 || w >= 6) return;
+      const days = weeks[5 - w], k = dayKey(d.created_at);
+      if (!days.has(k)) days.set(k, []);
+      days.get(k).push(d.mood);
     });
-    const bars = weeks.map((w, i) => {
-      const avg = w.length ? w.reduce((a, b) => a + b, 0) / w.length : null;
-      const h = avg == null ? 6 : Math.round(((avg + 1) / 5) * 100);
-      const label = avg == null ? 'sem registros' : 'média ' + MOODS[Math.round(avg)];
-      return `<div class="bar"><div class="bar-track"><div class="bar-fill${i === 5 ? ' now' : ''}${avg == null ? ' empty' : ''}" style="height:${h}%" title="${label}"></div></div><span>${i === 5 ? 'Agora' : '-' + (5 - i) + 's'}</span></div>`;
+    const weekStats = weeks.map((days) => {
+      const dayAvgs = [...days.values()].map((m) => m.reduce((a, b) => a + b, 0) / m.length);
+      return { avg: dayAvgs.length ? dayAvgs.reduce((a, b) => a + b, 0) / dayAvgs.length : null, n: dayAvgs.length };
+    });
+    const weekLabel = (s) => (s.avg == null ? 'sem registros' : `média ${MOODS[Math.round(s.avg)]} · ${s.n} ${s.n === 1 ? 'dia registrado' : 'dias registrados'}`);
+    const bars = weekStats.map((s, i) => {
+      const h = s.avg == null ? 6 : Math.round(((s.avg + 1) / 5) * 100);
+      return `<div class="bar"><div class="bar-track"><div class="bar-fill${i === 5 ? ' now' : ''}${s.avg == null ? ' empty' : ''}" style="height:${h}%" title="${weekLabel(s)}"></div></div><span>${i === 5 ? 'Agora' : '-' + (5 - i) + 's'}</span></div>`;
     }).join('');
-    const chartLabel = weeks.map((w, i) => (w.length ? `semana ${i + 1}: ${MOODS[Math.round(w.reduce((a, b) => a + b, 0) / w.length)]}` : `semana ${i + 1}: sem registros`)).join(', ');
+    const chartLabel = weekStats.map((s, i) => `semana ${i + 1}: ${weekLabel(s)}`).join(', ');
 
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
