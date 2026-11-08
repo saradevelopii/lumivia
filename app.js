@@ -25,6 +25,56 @@
   let me = null;
   let recovering = false;
 
+  /* ================= instalar como app (PWA) ================= */
+  let installEvt = null;
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = () => /android/i.test(navigator.userAgent);
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installEvt = e;
+    document.querySelectorAll('[data-install-btn]').forEach((b) => { b.hidden = false; });
+  });
+  window.addEventListener('appinstalled', () => {
+    installEvt = null;
+    document.querySelectorAll('.install-card').forEach((c) => c.remove());
+  });
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+  function installCard(dismissable) {
+    if (isStandalone()) return '';
+    if (dismissable) { try { if (localStorage.getItem('lumivia-install-hide')) return ''; } catch (e) { /* sem armazenamento */ } }
+    const how = isIOS()
+      ? 'No iPhone, abra pelo <strong>Safari</strong>, toque em <strong>Compartilhar</strong> (o quadrado com a seta para cima) e depois em <strong>Adicionar à Tela de Início</strong>.'
+      : isAndroid()
+        ? 'No Android, toque em <strong>Instalar app</strong> abaixo. Se o botão não aparecer, abra o menu <strong>⋮</strong> do Chrome e escolha <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong>.'
+        : 'No computador, use o botão <strong>Instalar app</strong> abaixo ou o ícone de instalar na barra de endereço do Chrome ou do Edge.';
+    return `<section class="card install-card">
+        <div class="profile-row"><img src="icons/icon-192.png" alt="" width="48" height="48" class="install-ico"><div>
+          <h2>Tenha o ${esc(APP)} no seu celular</h2>
+          <p class="muted small">Um ícone na tela inicial para abrir com um toque, como um aplicativo.</p></div></div>
+        <p class="small">${how}</p>
+        <div class="row-btns">
+          <button class="btn sm" type="button" data-install-btn${installEvt ? '' : ' hidden'}>Instalar app</button>
+          ${dismissable ? '<button class="btn sm ghost" type="button" data-install-hide>Agora não</button>' : ''}
+        </div>
+      </section>`;
+  }
+  function bindInstall() {
+    $app.querySelectorAll('[data-install-btn]').forEach((b) => b.addEventListener('click', async () => {
+      if (!installEvt) return;
+      installEvt.prompt();
+      const r = await installEvt.userChoice;
+      installEvt = null;
+      if (r && r.outcome === 'accepted') $app.querySelectorAll('.install-card').forEach((c) => c.remove());
+    }));
+    $app.querySelectorAll('[data-install-hide]').forEach((b) => b.addEventListener('click', () => {
+      try { localStorage.setItem('lumivia-install-hide', '1'); } catch (e) { /* sem armazenamento */ }
+      b.closest('.install-card').remove();
+    }));
+  }
+
   /* ================= utilidades ================= */
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const toDate = (d) => (d instanceof Date ? d : new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? d + 'T12:00:00' : d));
@@ -526,6 +576,7 @@
           : `<p><strong>${esc(me.full_name || '—')}</strong></p><p class="muted small">Para corrigir seu nome, fale com sua terapeuta.</p>`}
       </section>
       ${isT ? '' : termsCard(myT, myCs, { therapist: false })}
+      ${installCard(false)}
       <section class="card">
         <form id="pw" class="stack">
           <h2>Alterar senha</h2>
@@ -549,6 +600,7 @@
     $('#sair').addEventListener('click', () => sb.auth.signOut());
     bindPhoto('myphoto', me.id, me.avatar_path, async () => { await loadMe(); viewAccount(); });
     bindReceipt(myCs, me);
+    bindInstall();
     if ($('#myname')) $('#myname').addEventListener('submit', async (e) => {
       e.preventDefault();
       const full_name = $('#mname').value.trim();
@@ -933,6 +985,7 @@
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
       ${wheelCard}
+      ${installCard(true)}
       <section class="journey">
         <div class="row-between"><span class="kicker">Sua jornada</span><span class="kicker">${current ? `Fase ${current.position} de ${phases.length}` : ''}</span></div>
         <h2>${esc(current ? current.name : 'Sua jornada vai começar em breve')}</h2>
@@ -949,6 +1002,7 @@
         <span><span class="kicker-amber">${latestSeen ? 'CONTEÚDO MAIS RECENTE' : 'NOVO CONTEÚDO PARA VOCÊ'}</span><strong>${esc(latest[0].title)}</strong></span></a>` : ''}
       ${ther ? `<section class="card profile-row">${avatarHtml(ther, urls)}<div><p class="muted small">Sua terapeuta</p><strong>${esc(ther.full_name || '')}</strong></div></section>` : ''}`, 'inicio');
     bindChecks('data-goal', 'goals');
+    bindInstall();
   }
 
   // Acordos do processo do paciente: leitura e aceite

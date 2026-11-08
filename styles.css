@@ -372,3 +372,11 @@ details.card[open] > summary::after { content: "–"; }
 .bars { height: 140px; }
 .bar .bar-val { font-size: 11px; font-weight: 600; color: var(--brand-d); text-align: center; min-height: 14px; line-height: 14px; white-space: nowrap; }
 .chart-sum { font-size: 14px; }
+
+/* ===== Instalar como app ===== */
+.install-card { border: 1px solid var(--brand-l); }
+.install-card h2 { margin: 0; font-size: 17px; }
+.install-ico { width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0; }
+.install-card .row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.install-card .row-btns:empty { display: none; }
+[hidden] { display: none !important; }
