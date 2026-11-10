@@ -380,3 +380,10 @@ details.card[open] > summary::after { content: "–"; }
 .install-card .row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .install-card .row-btns:empty { display: none; }
 [hidden] { display: none !important; }
+
+/* ===== Materiais de sessão com reprodutor ===== */
+.mat-media { display: flex; flex-direction: column; gap: 8px; }
+.mat-title { display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600; color: var(--ink); }
+.mat-title svg { color: var(--brand); flex-shrink: 0; }
+.sess-group { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 16px; background: var(--card, #fff); border: 1px solid var(--line); }
+.sess-group .kicker { color: var(--brand); }

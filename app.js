@@ -1052,13 +1052,17 @@
 
   async function viewContents() {
     loading();
-    const [phases, unlocks, contents] = await Promise.all([
+    const [phases, unlocks, contents, mySessions] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', me.id)),
-      q(sb.from('contents').select('id,phase_id,kind,title,duration,created_at,audience').order('created_at'))
+      q(sb.from('contents').select('id,phase_id,kind,title,duration,created_at,audience').order('created_at')),
+      q(sb.from('sessions').select('id,patient_id,session_date').eq('patient_id', me.id).order('session_date', { ascending: false }).order('created_at', { ascending: false }))
     ]);
+    const sMats = mySessions.length ? await q(sb.from('session_materials').select('*').in('session_id', mySessions.map((x) => x.id)).order('created_at')) : [];
+    const sUrls = await signedUrls(sMats.map((m) => m.file_path));
+    const sessHtml = sessionContentHtml(mySessions, sMats, sUrls);
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
-    const filters = [['todos', 'Todos'], ['video', 'Vídeos'], ['texto', 'Textos'], ['exercicio', 'Exercícios'], ['audio', 'Áudios'], ['pdf', 'PDFs']];
+    const filters = [['todos', 'Todos'], ['sessoes', 'Conteúdo Sessões'], ['video', 'Vídeos'], ['texto', 'Textos'], ['exercicio', 'Exercícios'], ['audio', 'Áudios'], ['pdf', 'PDFs']];
     const seen = await viewedSet('content');
     let filter = 'todos';
 
@@ -1066,7 +1070,9 @@
       <span class="item-body">${!seen.has(c.id) ? '<span class="badge">NOVO</span>' : ''}<strong>${esc(c.title)}</strong>
       <span class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</span></span></a>`;
 
+    const sessSection = () => `<h2 class="sec">Conteúdo Sessões</h2>${sessHtml || '<p class="muted small">Os materiais das suas sessões aparecerão aqui.</p>'}`;
     function list() {
+      if (filter === 'sessoes') return sessSection();
       const open = phases.filter((p) => unlocked.has(p.id)).reverse();
       const locked = phases.filter((p) => !unlocked.has(p.id));
       const ok = (c) => filter === 'todos' || c.kind === filter;
@@ -1077,6 +1083,7 @@
         return `<h2 class="sec">Fase ${p.position} · ${esc(p.name)}</h2>${items.length ? items.map(itemHtml).join('') : '<p class="muted small">Nada deste tipo nesta fase ainda.</p>'}`;
       }).join('');
       if (!open.length && !personal.length) html = '<p class="muted">Seus conteúdos aparecerão aqui quando forem liberados.</p>';
+      if (filter === 'todos' && sessHtml) html = sessSection() + html;
       if (locked.length) {
         html += '<h2 class="sec">Próximas fases</h2>' + locked.map((p) => `<div class="item locked"><span class="thumb">${icon('lock')}</span>
           <span class="item-body"><strong>${esc(p.name)}</strong><span class="muted small">Será liberada pela sua terapeuta</span></span></div>`).join('');
@@ -1107,9 +1114,9 @@
     markViewed('content', [c.id]);
     const file = c.file_path ? urls[c.file_path] : '';
     const link = safeUrl(c.url);
-    const yt = link && link.match(/(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/);
+    const yt = link && ytId(link);
     let media = '';
-    if (yt) media = `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${yt[1]}" title="${esc(c.title)}" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe></div>`;
+    if (yt) media = ytPlayer(yt, c.title);
     else if (file && c.kind === 'video') media = `<video controls preload="metadata" src="${esc(file)}"></video>`;
     else if (file && c.kind === 'audio') media = `<audio controls preload="metadata" src="${esc(file)}"></audio>`;
     const actions = [];
@@ -1172,12 +1179,38 @@
     bindChecks('data-task', 'tasks');
   }
 
+  // Link do YouTube -> reprodutor embutido (mesmo da biblioteca)
+  function ytId(url) {
+    const m = url && url.match(/(?:youtu\.be\/|[?&]v=|embed\/|shorts\/|live\/)([\w-]{11})/);
+    return m ? m[1] : null;
+  }
+  function ytPlayer(id, title) {
+    return `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${id}" title="${esc(title)}" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe></div>`;
+  }
+  const VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
+  const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|aac)$/i;
+
   function materialsHtml(mats, urls) {
     return mats.map((m) => {
       const href = m.file_path ? urls[m.file_path] : safeUrl(m.url);
       if (!href) return '';
+      const yt = !m.file_path && ytId(href);
+      const title = `<span class="mat-title">${icon(yt || (m.file_path && VIDEO_EXT.test(m.file_path)) ? 'play' : m.file_path && AUDIO_EXT.test(m.file_path) ? 'audio' : 'file', 18)}${esc(m.title)}</span>`;
+      if (yt) return `<div class="mat-media">${title}${ytPlayer(yt, m.title)}</div>`;
+      if (m.file_path && VIDEO_EXT.test(m.file_path)) return `<div class="mat-media">${title}<video controls preload="metadata" src="${esc(href)}"></video></div>`;
+      if (m.file_path && AUDIO_EXT.test(m.file_path)) return `<div class="mat-media">${title}<audio controls preload="metadata" src="${esc(href)}"></audio></div>`;
       return `<a class="mat" href="${esc(href)}" target="_blank" rel="noopener">${icon(m.file_path ? 'file' : 'link', 20)}<span>${esc(m.title)}</span></a>`;
     }).join('');
+  }
+
+  // "Conteúdo Sessões": materiais de cada sessão, da mais recente para a mais antiga
+  function sessionContentHtml(sessions, mats, urls, nameOf) {
+    const withMats = sessions.filter((s) => mats.some((m) => m.session_id === s.id));
+    if (!withMats.length) return '';
+    return withMats.map((s) => `<div class="sess-group">
+        <p class="kicker">${nameOf ? esc(nameOf(s.patient_id)) + ' · ' : ''}Sessão de ${esc(fmtDate(s.session_date))}</p>
+        ${materialsHtml(mats.filter((m) => m.session_id === s.id), urls)}
+      </div>`).join('');
   }
 
   async function viewSessions() {
@@ -1296,6 +1329,8 @@
     if (!p) { go('#/pacientes'); return; }
     const notes = sessions.length ? await q(sb.from('session_private_notes').select('*').in('session_id', sessions.map((s) => s.id))) : [];
     const noteBy = Object.fromEntries(notes.map((n) => [n.session_id, n.notes]));
+    const pMats = sessions.length ? await q(sb.from('session_materials').select('*').in('session_id', sessions.map((s) => s.id)).order('created_at')) : [];
+    const pUrls = await signedUrls(pMats.map((m) => m.file_path));
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
@@ -1380,6 +1415,7 @@
           ${s.summary ? `<h3 class="sub-h">Resumo</h3><p class="prose">${esc(s.summary)}</p>` : ''}
           ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>
             <button type="button" class="btn sm ghost" data-clear-task="${s.id}">Remover tarefa desta sessão</button>` : ''}
+          ${(() => { const h = materialsHtml(pMats.filter((m) => m.session_id === s.id), pUrls); return h ? `<h3 class="sub-h">Materiais</h3><div class="stack" style="gap:8px">${h}</div>` : ''; })()}
           ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3><p class="prose">${esc(noteBy[s.id])}</p>` : ''}
           <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
         : '<p class="muted">Nenhuma sessão registrada.</p>'}
@@ -1678,12 +1714,22 @@
 
   async function viewLibrary() {
     loading();
-    const [phases, contents, patients, assigns] = await Promise.all([
+    const [phases, contents, patients, assigns, allSessions, allMats] = await Promise.all([
       q(sb.from('phases').select('*').order('position')),
       q(sb.from('contents').select('*').order('created_at')),
       q(sb.from('profiles').select('id,full_name,email,active').eq('role', 'patient').order('full_name')),
-      q(sb.from('content_patients').select('content_id'))
+      q(sb.from('content_patients').select('content_id')),
+      q(sb.from('sessions').select('id,patient_id,session_date').order('session_date', { ascending: false }).order('created_at', { ascending: false })),
+      q(sb.from('session_materials').select('*').order('created_at'))
     ]);
+    const matUrls = await signedUrls(allMats.map((m) => m.file_path));
+    const byPatient = patients.map((pp) => {
+      const ss = allSessions.filter((x) => x.patient_id === pp.id);
+      const n = allMats.filter((m) => ss.some((x) => x.id === m.session_id)).length;
+      return n ? `<details class="card"><summary><span>${esc(pp.full_name || pp.email)} <span class="muted small">· ${n} ${n === 1 ? 'material' : 'materiais'}</span></span></summary>
+          <div class="stack">${sessionContentHtml(ss, allMats, matUrls)}</div></details>` : '';
+    }).join('');
+
     const countBy = {};
     assigns.forEach((a) => { countBy[a.content_id] = (countBy[a.content_id] || 0) + 1; });
     const audBadge = (c) => {
@@ -1710,6 +1756,9 @@
             <button type="button" class="icon-btn" data-delc="${c.id}" aria-label="Apagar ${esc(c.title)}">${icon('trash', 18)}</button></div>`).join('')
             : '<p class="muted small">Nenhum conteúdo nesta fase.</p>'}`;
       }).join('')}
+      <h2 class="sec" style="margin-top:6px">Conteúdo Sessões</h2>
+      <p class="muted small" style="margin-top:-6px">Tudo o que você anexou nos registros de sessão, separado por paciente. Cada paciente vê só os materiais das próprias sessões.</p>
+      ${byPatient || '<p class="muted small">Os materiais adicionados nos registros de sessão aparecerão aqui.</p>'}
       <form id="pf" class="card">
         <h2>Nova fase</h2>
         <div class="inline"><label class="sr" for="pnew">Nome da nova fase</label><input id="pnew" type="text" placeholder="Nome da fase" required><button class="btn sm" type="submit">Criar</button></div>
