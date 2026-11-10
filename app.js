@@ -431,6 +431,7 @@
     leaf: '<path d="M12 21c-4-3-7-6.5-7-10a4.5 4.5 0 0 1 7-3.7A4.5 4.5 0 0 1 19 11c0 3.5-3 7-7 10z"/><path d="M12 7.3V21"/>',
     back: '<path d="M15 18l-6-6 6-6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
     wheel: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/>'
@@ -493,7 +494,217 @@
   const darkHeader = (kicker, title, sub, back, extra) => `<header class="hd-dark">${back ? `<a class="back" href="${back[0]}">${icon('back', 18)}${esc(back[1])}</a>` : `<span class="kicker">${esc(kicker)}</span>`}
       <h1>${esc(title)}</h1>${sub ? `<p>${esc(sub)}</p>` : ''}${extra || ''}</header>`;
   const field = (id, label, input) => `<div class="field"><label for="${id}">${label}</label>${input}</div>`;
-  const entryCard = (e, isNew) => `<article class="entry${isNew ? ' new' : ''}"><p class="kicker-s">${esc(fmtDate(e.created_at))}${e.mood != null ? ' · Humor: ' + MOODS[e.mood] : ''}${isNew ? ' · novo' : ''}</p>${e.reflection ? `<p class="prose">${esc(e.reflection)}</p>` : ''}</article>`;
+  const entryCard = (e, isNew) => `<article class="entry${isNew ? ' new' : ''}"><p class="kicker-s">${esc(fmtDate(e.created_at))}${e.mood != null ? ' · Humor: ' + MOODS[e.mood] : ''}${isNew ? ' · novo' : ''}</p>${e.reflection ? richBlock(e.reflection) : ''}</article>`;
+
+
+  /* ================= texto formatado (negrito, itálico, listas, emojis) =================
+     O texto é guardado como "markdown simples": **negrito**, *itálico* e linhas "- " para listas.
+     Assim o banco não muda, textos antigos continuam iguais e nunca guardamos HTML (mais seguro). */
+  function richInline(t) {
+    return t.replace(/\*\*([^*\n]+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<i>$2</i>');
+  }
+  function mdToHtml(md) {
+    const lines = esc(md || '').split(/\r?\n/);
+    let html = '', list = false;
+    for (const ln of lines) {
+      const m = ln.match(/^\s*[-•]\s+(.*)$/);
+      if (m) { if (!list) { html += '<ul>'; list = true; } html += `<li>${richInline(m[1]) || '<br>'}</li>`; continue; }
+      if (list) { html += '</ul>'; list = false; }
+      html += ln.trim() ? `<div>${richInline(ln)}</div>` : '<div><br></div>';
+    }
+    if (list) html += '</ul>';
+    return html;
+  }
+  // Para exibir: <div class="prose rich">…</div>
+  const richBlock = (md) => `<div class="prose rich">${mdToHtml(md)}</div>`;
+
+  function inlineMd(node) {
+    let out = '';
+    node.childNodes.forEach((n) => {
+      if (n.nodeType === 3) { out += n.nodeValue.replace(/ /g, ' '); return; }
+      if (n.nodeType !== 1) return;
+      const tag = n.tagName;
+      if (tag === 'BR') { out += '\n'; return; }
+      const inner = inlineMd(n);
+      const bold = tag === 'B' || tag === 'STRONG' || /^(bold|[6-9]00)$/.test(n.style.fontWeight);
+      const ital = tag === 'I' || tag === 'EM' || n.style.fontStyle === 'italic';
+      if (!inner.trim()) { out += inner; return; }
+      // marcadores ficam colados ao texto (espaços ficam de fora)
+      const lead = inner.match(/^\s*/)[0], trail = inner.match(/\s*$/)[0], core = inner.trim();
+      let w = core;
+      if (ital) w = `*${w}*`;
+      if (bold) w = `**${w}**`;
+      out += lead + w + trail;
+    });
+    return out;
+  }
+  function editorToMd(root) {
+    const lines = [];
+    let cur = '';
+    const push = () => { lines.push(cur); cur = ''; };
+    const startLine = () => { if (cur) push(); };
+    const walk = (node) => {
+      node.childNodes.forEach((n, idx) => {
+        if (n.nodeType === 3) { cur += n.nodeValue.replace(/ /g, ' ').replace(/\n/g, ' '); return; }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName;
+        if (tag === 'BR') {
+          const last = idx === node.childNodes.length - 1 && node !== root && node.childNodes.length > 1;
+          if (!last) push();
+          return;
+        }
+        if (tag === 'UL' || tag === 'OL') {
+          startLine();
+          n.querySelectorAll(':scope > li').forEach((li) => lines.push('- ' + inlineMd(li).replace(/\n+/g, ' ').trim()));
+          return;
+        }
+        if (tag === 'DIV' || tag === 'P' || tag === 'LI') {
+          startLine();
+          if (n.querySelector('div,p,ul,ol')) walk(n);
+          else { const t = inlineMd(n); if (t === '\n' || t === '') lines.push(''); else t.replace(/\n$/, '').split('\n').forEach((x) => lines.push(tag === 'LI' ? '- ' + x : x)); }
+          return;
+        }
+        cur += inlineMd({ childNodes: [n] });
+      });
+    };
+    walk(root);
+    if (cur) push();
+    return lines.map((l) => l.replace(/\s+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  const EMOJIS = [
+    ['😀', 'feliz sorriso alegre'], ['😊', 'feliz contente sorriso'], ['🙂', 'leve ok sorriso'], ['😄', 'alegre risada'], ['😂', 'rindo risada chorando de rir'],
+    ['🥰', 'amor carinho apaixonado'], ['😍', 'amei amor'], ['🤗', 'abraço acolhimento'], ['😌', 'calma alivio paz tranquilo'], ['😇', 'grato anjo paz'],
+    ['🥲', 'emocionado sorriso triste'], ['😐', 'neutro indiferente'], ['😶', 'sem palavras vazio'], ['🤔', 'pensando duvida reflexao'], ['😕', 'confuso'],
+    ['😔', 'triste pensativo desanimado'], ['😢', 'triste choro lagrima'], ['😭', 'chorando muito triste'], ['😞', 'decepcionado triste'], ['😟', 'preocupado'],
+    ['😰', 'ansioso ansiedade nervoso'], ['😨', 'medo assustado'], ['😱', 'panico susto'], ['😤', 'frustrado bravo'], ['😠', 'raiva bravo irritado'],
+    ['😡', 'raiva furioso'], ['😩', 'exausto cansado'], ['😫', 'cansado esgotado'], ['😴', 'sono dormir cansado'], ['🥱', 'sono bocejo tedio'],
+    ['🤯', 'sobrecarregado cabeça explodindo'], ['😵‍💫', 'tonto confuso perdido'], ['🫠', 'derretendo sem energia'], ['🤒', 'doente'], ['🤕', 'machucado dor'],
+    ['😳', 'vergonha surpreso'], ['🫣', 'vergonha timido'], ['😎', 'confiante'], ['🥳', 'comemorar festa conquista'], ['🤩', 'empolgado animado'],
+    ['💪', 'forca coragem conquista'], ['🙏', 'gratidao obrigado fe'], ['👏', 'parabens aplauso'], ['👍', 'ok certo positivo'], ['🫶', 'carinho amor maos coracao'],
+    ['❤️', 'coracao amor'], ['💚', 'coracao verde esperanca'], ['💛', 'coracao amarelo amizade'], ['💔', 'coracao partido tristeza'], ['🩹', 'curativo cura'],
+    ['✨', 'brilho especial magia'], ['🌱', 'crescimento broto comeco'], ['🌿', 'natureza folha'], ['🌸', 'flor delicado'], ['🌻', 'girassol alegria'],
+    ['☀️', 'sol dia bom'], ['🌧️', 'chuva dia ruim'], ['⛈️', 'tempestade crise'], ['🌈', 'arco iris esperanca'], ['🌙', 'noite lua'],
+    ['🔥', 'fogo energia motivacao'], ['⭐', 'estrela destaque'], ['🎯', 'objetivo meta foco'], ['✅', 'feito concluido check'], ['📌', 'importante lembrar'],
+    ['💡', 'ideia insight'], ['📝', 'anotar escrever'], ['📚', 'estudo livro'], ['🧘', 'meditacao respirar calma'], ['🏃', 'exercicio correr'],
+    ['🚶', 'caminhar andar'], ['🛌', 'descanso cama dormir'], ['🍎', 'alimentacao comida saudavel'], ['💧', 'agua'], ['☕', 'cafe pausa'],
+    ['👨‍👩‍👧', 'familia'], ['👫', 'amigos casal'], ['💼', 'trabalho'], ['💰', 'dinheiro financas'], ['🎵', 'musica'],
+    ['⚠️', 'atencao alerta'], ['❗', 'importante'], ['❓', 'pergunta duvida'], ['➡️', 'proximo passo seta'], ['1️⃣', 'um primeiro'],
+    ['2️⃣', 'dois segundo'], ['3️⃣', 'tres terceiro']
+  ];
+  const noAccent = (t) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+  // Troca um <textarea> por um editor com barra de formatação. O textarea continua no formulário
+  // (escondido) com o texto em markdown simples, então os formulários leem .value como antes.
+  function enhanceRich(sel) {
+    const ta = typeof sel === 'string' ? $(sel) : sel;
+    if (!ta || ta.dataset.rich) return;
+    ta.dataset.rich = '1';
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    const k = mac ? '⌘' : 'Ctrl+';
+    const wrap = document.createElement('div');
+    wrap.className = 'rte' + (ta.classList.contains('private') ? ' private' : '');
+    wrap.innerHTML = `<div class="rte-bar" role="toolbar" aria-label="Formatação do texto">
+        <button type="button" class="rte-btn" data-cmd="bold" aria-pressed="false" title="Negrito (${k}B)" aria-label="Negrito"><b>B</b></button>
+        <button type="button" class="rte-btn" data-cmd="italic" aria-pressed="false" title="Itálico (${k}I)" aria-label="Itálico"><i>I</i></button>
+        <button type="button" class="rte-btn" data-cmd="insertUnorderedList" aria-pressed="false" title="Lista com marcadores" aria-label="Lista com marcadores">${icon('list', 20)}</button>
+        <span class="rte-sep" aria-hidden="true"></span>
+        <button type="button" class="rte-btn" data-emoji aria-expanded="false" title="Emojis" aria-label="Inserir emoji"><span aria-hidden="true">😀</span></button>
+      </div>
+      <div class="rte-area" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="true"></div>
+      <div class="rte-pop" hidden>
+        <input type="search" class="rte-search" placeholder="Buscar emoji: triste, calma, gratidão…" aria-label="Buscar emoji">
+        <div class="rte-grid" role="listbox" aria-label="Emojis"></div>
+      </div>`;
+    ta.insertAdjacentElement('afterend', wrap);
+    ta.hidden = true;
+    const ed = wrap.querySelector('.rte-area');
+    const pop = wrap.querySelector('.rte-pop');
+    const grid = wrap.querySelector('.rte-grid');
+    const search = wrap.querySelector('.rte-search');
+    const lab = ta.id && document.querySelector(`label[for="${ta.id}"]`);
+    if (lab) { lab.id = lab.id || 'lbl-' + ta.id; ed.setAttribute('aria-labelledby', lab.id); lab.addEventListener('click', (e) => { e.preventDefault(); ed.focus(); }); }
+    ed.dataset.placeholder = ta.placeholder || '';
+    ed.style.minHeight = (Number(ta.getAttribute('rows')) || 4) * 1.6 + 'em';
+    ed.innerHTML = ta.value.trim() ? mdToHtml(ta.value) : '';
+
+    let range = null;
+    const saveRange = () => { const s = getSelection(); if (s.rangeCount && ed.contains(s.anchorNode)) range = s.getRangeAt(0).cloneRange(); };
+    const restore = () => { ed.focus(); if (range) { const s = getSelection(); s.removeAllRanges(); s.addRange(range); } };
+    const sync = () => {
+      ta.value = editorToMd(ed);
+      wrap.classList.toggle('is-empty', !ed.textContent.trim() && !ed.querySelector('li'));
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const refresh = () => {
+      if (!ed.contains(getSelection().anchorNode)) return;
+      wrap.querySelectorAll('[data-cmd]').forEach((b) => { let on = false; try { on = document.queryCommandState(b.dataset.cmd); } catch (e) { /* */ } b.setAttribute('aria-pressed', String(!!on)); });
+    };
+    const run = (cmd) => {
+      restore();
+      try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* */ }
+      document.execCommand(cmd, false, null);
+      saveRange(); sync(); refresh();
+    };
+    sync();
+
+    wrap.querySelectorAll('[data-cmd]').forEach((b) => {
+      b.addEventListener('mousedown', (e) => e.preventDefault()); // não tira o foco do texto
+      b.addEventListener('click', () => run(b.dataset.cmd));
+    });
+    ed.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 'b') { e.preventDefault(); run('bold'); }
+      else if (key === 'i') { e.preventDefault(); run('italic'); }
+    });
+    ed.addEventListener('input', () => { saveRange(); sync(); });
+    ed.addEventListener('keyup', () => { saveRange(); refresh(); });
+    ed.addEventListener('mouseup', () => { saveRange(); refresh(); });
+    ed.addEventListener('blur', saveRange);
+    document.addEventListener('selectionchange', () => { if (document.activeElement === ed) { saveRange(); refresh(); } });
+    // colar sempre como texto simples (sem fontes e cores de outros sites)
+    ed.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const t = (e.clipboardData || window.clipboardData).getData('text/plain');
+      document.execCommand('insertText', false, t);
+    });
+    ed.addEventListener('drop', (e) => e.preventDefault());
+
+    // emojis
+    const fill = (term) => {
+      const t = noAccent(term.trim());
+      const list = t ? EMOJIS.filter(([, w]) => noAccent(w).includes(t)) : EMOJIS;
+      grid.innerHTML = list.length ? list.map(([em, w]) => `<button type="button" class="rte-em" role="option" title="${esc(w.split(' ')[0])}" aria-label="${esc(w.split(' ')[0])}">${em}</button>`).join('')
+        : '<p class="muted small">Nenhum emoji encontrado. Dica: no celular, use também o teclado de emojis.</p>';
+    };
+    const emBtn = wrap.querySelector('[data-emoji]');
+    const close = () => { pop.hidden = true; emBtn.setAttribute('aria-expanded', 'false'); };
+    emBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    emBtn.addEventListener('click', () => {
+      if (!pop.hidden) { close(); restore(); return; }
+      saveRange(); fill(''); search.value = '';
+      pop.hidden = false; emBtn.setAttribute('aria-expanded', 'true');
+      if (matchMedia('(pointer: fine)').matches) search.focus(); // no celular não abre o teclado sem pedir
+    });
+    search.addEventListener('input', () => fill(search.value));
+    search.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); restore(); } if (e.key === 'Enter') { e.preventDefault(); const f = grid.querySelector('.rte-em'); if (f) f.click(); } });
+    grid.addEventListener('mousedown', (e) => { if (e.target.closest('.rte-em')) e.preventDefault(); });
+    grid.addEventListener('click', (e) => {
+      const b = e.target.closest('.rte-em');
+      if (!b) return;
+      restore();
+      document.execCommand('insertText', false, b.textContent);
+      saveRange(); sync(); close();
+    });
+    document.addEventListener('click', (e) => { if (!pop.hidden && !wrap.contains(e.target)) close(); });
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { close(); restore(); } });
+
+    // celular: enquanto digita, o menu de baixo some para não cobrir o texto
+    ed.addEventListener('focus', () => document.body.classList.add('typing'));
+    ed.addEventListener('blur', () => setTimeout(() => { if (!wrap.contains(document.activeElement)) document.body.classList.remove('typing'); }, 150));
+    ed.addEventListener('focus', () => setTimeout(() => wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 300));
+  }
 
   function bindChecks(attr, table) {
     $$(`[${attr}]`).forEach((cb) => cb.addEventListener('change', async () => {
@@ -1127,7 +1338,7 @@
     shell(`<a class="back-l" href="${backHref}">${icon('back', 18)}${backLabel}</a>
       <header class="hd"><div><p class="muted small">${KINDS[c.kind] || ''}${c.duration ? ' · ' + esc(c.duration) : ''}</p><h1>${esc(c.title)}</h1></div></header>
       ${media}
-      ${c.body ? `<section class="card"><p class="prose">${esc(c.body)}</p></section>` : ''}
+      ${c.body ? `<section class="card">${richBlock(c.body)}</section>` : ''}
       ${actions.join('')}`, me.role === 'therapist' ? 'biblioteca' : 'conteudos');
   }
 
@@ -1160,6 +1371,7 @@
       <h2 class="sec">Registros anteriores</h2>
       ${entries.length ? entries.map((e) => entryCard(e)).join('') : '<p class="muted">Seus registros aparecerão aqui.</p>'}`, 'diario');
 
+    enhanceRich('#ref');
     $$('[data-mood]').forEach((b) => b.addEventListener('click', () => {
       mood = Number(b.dataset.mood);
       $$('[data-mood]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
@@ -1224,7 +1436,7 @@
     const isNew = (s) => (!seenS.has(s.id) ? ' <span class="badge">NOVA</span>' : '');
 
     const body = (s) => `
-      ${s.summary ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Resumo da terapeuta</h3><p class="prose">${esc(s.summary)}</p></div>` : ''}
+      ${s.summary ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Resumo da terapeuta</h3>${richBlock(s.summary)}</div>` : ''}
       ${s.weekly_task ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Combinado para a semana</h3><p class="prose">${esc(s.weekly_task)}</p></div>` : ''}
       ${(() => { const h = materialsHtml(mats.filter((m) => m.session_id === s.id), urls); return h ? `<div class="stack" style="gap:8px"><h3 class="sub-h">Materiais da sessão</h3>${h}</div>` : ''; })()}`;
 
@@ -1412,11 +1624,11 @@
       ${diary.length ? diary.map((e) => entryCard(e, !lastSessionAt || new Date(e.created_at) > lastSessionAt)).join('') : '<p class="muted">O paciente ainda não escreveu no diário.</p>'}
       <h2 class="sec">Sessões</h2>
       ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
-          ${s.summary ? `<h3 class="sub-h">Resumo</h3><p class="prose">${esc(s.summary)}</p>` : ''}
+          ${s.summary ? `<h3 class="sub-h">Resumo</h3>${richBlock(s.summary)}` : ''}
           ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>
             <button type="button" class="btn sm ghost" data-clear-task="${s.id}">Remover tarefa desta sessão</button>` : ''}
           ${(() => { const h = materialsHtml(pMats.filter((m) => m.session_id === s.id), pUrls); return h ? `<h3 class="sub-h">Materiais</h3><div class="stack" style="gap:8px">${h}</div>` : ''; })()}
-          ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3><p class="prose">${esc(noteBy[s.id])}</p>` : ''}
+          ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3>${richBlock(noteBy[s.id])}` : ''}
           <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
         : '<p class="muted">Nenhuma sessão registrada.</p>'}
       ${statusCard}`, 'pacientes');
@@ -1546,6 +1758,8 @@
         <button class="btn" type="submit">Liberar para o paciente</button>
       </form>`, 'pacientes');
 
+    enhanceRich('#sum');
+    enhanceRich('#notes');
     let n = 0;
     $('#addlink').addEventListener('click', () => {
       n += 1;
@@ -1682,6 +1896,7 @@
         <a class="btn ghost" href="#/conteudo/${c.id}">Ver como o paciente vê</a>
       </form>`, 'biblioteca');
     bindAudience();
+    enhanceRich('#cbody');
 
     $('#ef').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1764,6 +1979,7 @@
         <div class="inline"><label class="sr" for="pnew">Nome da nova fase</label><input id="pnew" type="text" placeholder="Nome da fase" required><button class="btn sm" type="submit">Criar</button></div>
       </form>`, 'biblioteca');
     bindAudience();
+    enhanceRich('#cbody');
 
     $('#cf').addEventListener('submit', async (e) => {
       e.preventDefault();
