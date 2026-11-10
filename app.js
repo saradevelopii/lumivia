@@ -432,6 +432,7 @@
     back: '<path d="M15 18l-6-6 6-6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
     wheel: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/>'
@@ -494,7 +495,6 @@
   const darkHeader = (kicker, title, sub, back, extra) => `<header class="hd-dark">${back ? `<a class="back" href="${back[0]}">${icon('back', 18)}${esc(back[1])}</a>` : `<span class="kicker">${esc(kicker)}</span>`}
       <h1>${esc(title)}</h1>${sub ? `<p>${esc(sub)}</p>` : ''}${extra || ''}</header>`;
   const field = (id, label, input) => `<div class="field"><label for="${id}">${label}</label>${input}</div>`;
-  const entryCard = (e, isNew) => `<article class="entry${isNew ? ' new' : ''}"><p class="kicker-s">${esc(fmtDate(e.created_at))}${e.mood != null ? ' · Humor: ' + MOODS[e.mood] : ''}${isNew ? ' · novo' : ''}</p>${e.reflection ? richBlock(e.reflection) : ''}</article>`;
 
 
   /* ================= texto formatado (negrito, itálico, listas, emojis) =================
@@ -704,6 +704,95 @@
     ed.addEventListener('focus', () => document.body.classList.add('typing'));
     ed.addEventListener('blur', () => setTimeout(() => { if (!wrap.contains(document.activeElement)) document.body.classList.remove('typing'); }, 150));
     ed.addEventListener('focus', () => setTimeout(() => wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 300));
+  }
+
+
+  /* ================= diário: histórico por mês ================= */
+  const MOOD_COLOR = ['#B5523F', '#C98A2B', '#8F9A95', '#4E9A82', '#2F6B5E'];
+  const MOOD_BG = ['#F3D9D4', '#F6E7CC', '#E6ECE8', '#D5E3DD', '#BFD8CD'];
+  const MOOD_FG = ['#8A3B2E', '#7A4E0E', '#4C5852', '#2F6B5E', '#1F4D43'];
+  const moodTag = (m) => (m == null ? '' : `<span class="mtag" style="background:${MOOD_BG[m]};color:${MOOD_FG[m]}">${MOODS[m]}</span>`);
+  // barra com todos os humores do período (não esconde os dias difíceis) + legenda em texto
+  function moodDist(entries, onDark) {
+    const c = [0, 0, 0, 0, 0];
+    entries.forEach((e) => { if (e.mood != null) c[e.mood] += 1; });
+    const parts = c.map((n, i) => [n, i]).filter(([n]) => n);
+    if (!parts.length) return '';
+    const txt = parts.map(([n, i]) => `${MOODS[i]} ${n}`).join(' · ');
+    return `<div class="dist${onDark ? ' on-dark' : ''}"><div class="dbar" role="img" aria-label="Humor no período: ${txt}">${parts.map(([n, i]) => `<i style="flex:${n};background:${MOOD_COLOR[i]}"></i>`).join('')}</div>
+      <div class="dleg" aria-hidden="true">${parts.map(([n, i]) => `<span><b style="color:${onDark ? '#fff' : MOOD_COLOR[i]}">●</b> ${MOODS[i]} ${n}</span>`).join('')}</div></div>`;
+  }
+  const monthKey = (d) => { const x = toDate(d); return x.getFullYear() * 100 + x.getMonth(); };
+  const monthName = (d) => {
+    const x = toDate(d);
+    const m = x.toLocaleDateString('pt-BR', { month: 'long' });
+    const t = m.charAt(0).toUpperCase() + m.slice(1);
+    return x.getFullYear() === new Date().getFullYear() ? t : `${t} de ${x.getFullYear()}`;
+  };
+  const monthsAgoStart = (n) => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() - (n - 1), 1); };
+  const fmtTime = (d) => toDate(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const dayKey = (d) => { const x = toDate(d); return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`; };
+  const dayName = (d) => { const t = fmtFull(d); return t.charAt(0).toUpperCase() + t.slice(1); };
+  // opt.notes: { [entry_id]: { note, pinned } } -> mostra nota privada e ações (só terapeuta)
+  function diaryItem(e, opt = {}) {
+    const clamp = opt.clamp !== false;
+    const when = opt.timeOnly ? `<span class="time">${esc(fmtTime(e.created_at))}</span>` : `${esc(fmtFull(e.created_at))} · ${esc(fmtTime(e.created_at))}`;
+    const n = opt.notes ? (opt.notes[e.id] || {}) : null;
+    const tools = n ? `${n.note ? `<div class="pnote"><b>Nota privada · só você vê</b><div class="prose">${esc(n.note)}</div></div>` : ''}
+      <div class="ftools"><button type="button" class="pin" data-pin="${e.id}" aria-pressed="${n.pinned ? 'true' : 'false'}">📌 Levar para a sessão</button>
+      <button type="button" class="pin" data-note="${e.id}">${icon('pen', 14)} ${n.note ? 'Editar nota' : 'Nota privada'}</button></div>` : '';
+    return `<article class="fe${opt.isNew ? ' new' : ''}" id="e-${e.id}"><div class="erow"><p class="kicker-s">${when}${opt.isNew ? ' · novo' : ''}</p>${moodTag(e.mood)}</div>
+      ${e.reflection ? `<div class="prose rich${clamp ? ' clamp' : ''}">${mdToHtml(e.reflection)}</div>${clamp ? '<button type="button" class="more" hidden>Ler mais</button>' : ''}` : '<p class="muted small">Só o humor, sem texto.</p>'}${tools}</article>`;
+  }
+  // grupos por mês; opt.open: 'first' | 'all'; opt.bar: mostra a barra de humor (só terapeuta)
+  function monthGroups(entries, opt = {}) {
+    const groups = [];
+    entries.forEach((e) => {
+      const k = monthKey(e.created_at);
+      let g = groups[groups.length - 1];
+      if (!g || g.k !== k) { g = { k, d: e.created_at, items: [] }; groups.push(g); }
+      g.items.push(e);
+    });
+    return groups.map((g, i) => {
+      const open = opt.open === 'all' || i === 0;
+      return `<details class="mgroup"${open ? ' open' : ''}><summary class="mhead"><span class="row-between"><strong>${esc(monthName(g.d))}</strong>
+        <span class="muted small">${g.items.length} ${g.items.length === 1 ? 'registro' : 'registros'}</span></span>${opt.bar ? moodDist(g.items) : ''}</summary>
+        <div class="mitems">${g.items.map((e, j) => `${j === 0 || dayKey(g.items[j - 1].created_at) !== dayKey(e.created_at) ? `<p class="daygrp">${esc(dayName(e.created_at))}</p>` : ''}${diaryItem(e, { timeOnly: true, notes: opt.notes })}`).join('')}</div></details>`;
+    }).join('');
+  }
+  // "Ler mais" só aparece quando o texto passa de 3 linhas
+  function bindClamp(root) {
+    (root || $app).querySelectorAll('.fe').forEach((a) => {
+      const pr = a.querySelector('.clamp'); const b = a.querySelector('.more');
+      if (!pr || !b || b.dataset.bound) return;
+      b.dataset.bound = '1';
+      const check = () => { if (pr.classList.contains('clamp')) b.hidden = pr.scrollHeight <= pr.clientHeight + 2; };
+      check();
+      a.closest('details') && a.closest('details').addEventListener('toggle', check);
+      b.addEventListener('click', () => { const c = pr.classList.toggle('clamp'); b.textContent = c ? 'Ler mais' : 'Ler menos'; });
+    });
+  }
+  function highlight(root, term) {
+    if (!term) return;
+    const t = term.toLowerCase();
+    root.querySelectorAll('.fe .prose').forEach((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach((n) => {
+        const v = n.nodeValue; const low = v.toLowerCase();
+        let i = low.indexOf(t);
+        if (i < 0) return;
+        const frag = document.createDocumentFragment(); let last = 0;
+        while (i >= 0) {
+          frag.appendChild(document.createTextNode(v.slice(last, i)));
+          const mk = document.createElement('mark'); mk.textContent = v.slice(i, i + t.length); frag.appendChild(mk);
+          last = i + t.length; i = low.indexOf(t, last);
+        }
+        frag.appendChild(document.createTextNode(v.slice(last)));
+        n.parentNode.replaceChild(frag, n);
+      });
+    });
   }
 
   function bindChecks(attr, table) {
@@ -1346,20 +1435,25 @@
     loading();
     const [tasks, entries] = await Promise.all([
       q(sb.from('tasks').select('*').eq('patient_id', me.id).order('done').order('created_at', { ascending: false }).limit(20)),
-      q(sb.from('diary_entries').select('*').eq('patient_id', me.id).order('created_at', { ascending: false }).limit(10))
+      q(sb.from('diary_entries').select('*').eq('patient_id', me.id).gte('created_at', monthsAgoStart(3).toISOString()).order('created_at', { ascending: false }).limit(1000))
     ]);
+    let months = 3;
+    const olderCount = async () => (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', me.id).lt('created_at', monthsAgoStart(months).toISOString())).count || 0;
+    let older = await olderCount();
     let mood = null;
     const done = tasks.filter((t) => t.done).length;
 
     shell(`${header('Diário', 'Sua terapeuta lê antes da próxima sessão')}
       <form id="df" class="stack">
-        <section class="card">
-          <h2 id="mh">Como você está hoje?</h2>
+        <section class="card" id="mcard">
+          <h2 id="mh">Como você está agora?</h2>
+          <p class="mwarn" id="mwarn" role="alert" hidden>💛 Antes de salvar, escolha como você está. Pode ser o que mais se aproxima.</p>
           <div class="moods" role="group" aria-labelledby="mh">${MOODS.map((m, i) => `<button type="button" class="mood" data-mood="${i}" aria-pressed="false">${m}</button>`).join('')}</div>
         </section>
         <section class="card">
-          <label for="ref" class="h2">Reflexão do dia</label>
-          <textarea id="ref" rows="5" placeholder="O que você percebeu em si hoje?"></textarea>
+          <label for="ref" class="h2">Reflexão do momento</label>
+          <textarea id="ref" rows="5" placeholder="O que você está percebendo em si?"></textarea>
+          <p class="small muted" id="kept" hidden>✓ Seu texto continua aqui.</p>
         </section>
         <button class="btn" type="submit">Salvar registro</button>
       </form>
@@ -1368,18 +1462,41 @@
         ${tasks.length ? `<ul class="checks">${tasks.map((t) => `<li><label><input type="checkbox" data-task="${t.id}"${t.done ? ' checked' : ''}><span>${esc(t.title)}</span></label></li>`).join('')}</ul>`
           : '<p class="muted">Nenhuma tarefa no momento.</p>'}
       </section>
-      <h2 class="sec">Registros anteriores</h2>
-      ${entries.length ? entries.map((e) => entryCard(e)).join('') : '<p class="muted">Seus registros aparecerão aqui.</p>'}`, 'diario');
+      <h2 class="sec">Seus registros</h2>
+      <div id="dlist" class="stack">${entries.length ? monthGroups(entries) : '<p class="muted">Seus registros aparecerão aqui.</p>'}</div>
+      <button type="button" class="btn ghost" id="dmore"${older ? '' : ' hidden'}>Carregar meses anteriores</button>`, 'diario');
+    bindClamp();
+    $('#dmore').addEventListener('click', async () => {
+      const b = $('#dmore'); b.disabled = true;
+      try {
+        const until = monthsAgoStart(months).toISOString();
+        months += 3;
+        const more = await q(sb.from('diary_entries').select('*').eq('patient_id', me.id).gte('created_at', monthsAgoStart(months).toISOString()).lt('created_at', until).order('created_at', { ascending: false }).limit(1000));
+        entries.push(...more);
+        $('#dlist').innerHTML = monthGroups(entries);
+        bindClamp();
+        older = await olderCount();
+        b.hidden = !older;
+      } catch (err) { /* toast */ }
+      b.disabled = false;
+    });
 
     enhanceRich('#ref');
     $$('[data-mood]').forEach((b) => b.addEventListener('click', () => {
       mood = Number(b.dataset.mood);
       $$('[data-mood]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      $('#mcard').classList.remove('need'); $('#mwarn').hidden = true; $('#kept').hidden = true;
     }));
     $('#df').addEventListener('submit', async (e) => {
       e.preventDefault();
       const reflection = $('#ref').value.trim();
-      if (mood == null && !reflection) return toast('Escolha como você está ou escreva uma reflexão.', true);
+      if (mood == null) {
+        // humor obrigatório: destaca a pergunta, sem apagar o texto
+        $('#mcard').classList.add('need'); $('#mwarn').hidden = false; $('#kept').hidden = !reflection;
+        $('#mcard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => $('[data-mood]').focus({ preventScroll: true }), 350);
+        return;
+      }
       const btn = $('#df button[type=submit]');
       btn.disabled = true;
       try {
@@ -1534,7 +1651,7 @@
       q(sb.from('phase_unlocks').select('phase_id').eq('patient_id', pid)),
       q(sb.from('goals').select('*').eq('patient_id', pid).order('created_at')),
       q(sb.from('tasks').select('*').eq('patient_id', pid).order('done').order('created_at', { ascending: false }).limit(30)),
-      q(sb.from('diary_entries').select('*').eq('patient_id', pid).order('created_at', { ascending: false }).limit(15)),
+      q(sb.from('diary_entries').select('*').eq('patient_id', pid).gte('created_at', new Date(Date.now() - 400 * DAY).toISOString()).order('created_at', { ascending: false }).limit(300)),
       q(sb.from('sessions').select('*').eq('patient_id', pid).order('session_date', { ascending: false }).order('created_at', { ascending: false }).limit(10)),
       sb.from('sessions').select('id', { count: 'exact', head: true }).eq('patient_id', pid)
     ]);
@@ -1547,6 +1664,18 @@
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const moodDiary = await q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', pid).gte('created_at', new Date(Date.now() - 42 * DAY).toISOString()));
+    const diaryTotal = (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', pid)).count || 0;
+    const pinnedCount = (await sb.from('diary_notes').select('entry_id', { count: 'exact', head: true }).eq('patient_id', pid).eq('pinned', true)).count || 0;
+    const sinceRef = lastSessionAt || new Date(Date.now() - 7 * DAY);
+    const fresh = diary.filter((e) => new Date(e.created_at) > sinceRef);
+    const diaryHighlights = !diaryTotal ? '<p class="muted">O paciente ainda não escreveu no diário.</p>' : `
+      <section class="card sumcard"><p class="kicker">${lastSessionAt ? `Desde a última sessão (${esc(fmtDate(sessions[0].session_date))})` : 'Nos últimos 7 dias'}</p>
+        <h2>${fresh.length ? `${fresh.length} ${fresh.length === 1 ? 'registro novo' : 'registros novos'}` : 'Nenhum registro novo'}</h2>${moodDist(fresh, true)}</section>
+      ${pinnedCount ? `<a class="pinlink" href="#/paciente/${pid}/diario">📌 ${pinnedCount} ${pinnedCount === 1 ? 'registro marcado' : 'registros marcados'} para levar à sessão</a>` : ''}
+      ${fresh.slice(0, 2).map((e) => diaryItem(e, { clamp: false, isNew: true })).join('')}
+      ${fresh.length > 2 ? `<p class="small muted" style="text-align:center">+ ${fresh.length - 2} ${fresh.length - 2 === 1 ? 'registro novo' : 'registros novos'}</p>` : ''}
+      ${fresh.length ? `<a class="btn ghost" href="#/paciente/${pid}/diario/novos">Ver ${fresh.length === 1 ? 'o registro novo' : `os ${fresh.length} registros novos`}</a>` : ''}
+      <a class="btn-link center" href="#/paciente/${pid}/diario">Ver diário completo (${diaryTotal} ${diaryTotal === 1 ? 'registro' : 'registros'})</a>`;
     const urls = await avatarUrls([p.avatar_path]);
     const [pterms, consents, wAcc, wEntries] = await Promise.all([
       q(sb.from('patient_terms').select('*').eq('patient_id', pid).maybeSingle()),
@@ -1620,8 +1749,8 @@
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
       ${moodChart(moodDiary, 'Bem-estar nas últimas semanas', 'Média do humor registrado pelo paciente no diário. Cada dia tem o mesmo peso, mesmo com vários registros.')}
-      <h2 class="sec">Diário recente</h2>
-      ${diary.length ? diary.map((e) => entryCard(e, !lastSessionAt || new Date(e.created_at) > lastSessionAt)).join('') : '<p class="muted">O paciente ainda não escreveu no diário.</p>'}
+      <h2 class="sec">Diário</h2>
+      ${diaryHighlights}
       <h2 class="sec">Sessões</h2>
       ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
           ${s.summary ? `<h3 class="sub-h">Resumo</h3>${richBlock(s.summary)}` : ''}
@@ -1716,6 +1845,180 @@
         viewPatient(pid);
       } catch (err) { /* toast */ }
     }));
+  }
+
+
+  // Terapeuta: diário completo com busca e filtros (período, datas, humor)
+  async function viewPatientDiary(pid, preset) {
+    loading();
+    const [p, lastS, totalRes] = await Promise.all([
+      q(sb.from('profiles').select('id,full_name,email').eq('id', pid).maybeSingle()),
+      q(sb.from('sessions').select('session_date,created_at').eq('patient_id', pid).order('session_date', { ascending: false }).order('created_at', { ascending: false }).limit(1)),
+      sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', pid)
+    ]);
+    if (!p) { go('#/pacientes'); return; }
+    const lastAt = lastS[0] ? new Date(lastS[0].created_at) : null;
+    const total = totalRes.count || 0;
+    const name = p.full_name || p.email;
+    const st = { term: '', period: preset === 'novos' ? 'sessao' : 'all', from: '', to: '', hard: false, months: 3 };
+    let draft = null;
+    const PERIODS = [['sessao', lastAt ? 'Desde a última sessão' : 'Últimos 7 dias'], ['7', '7 dias'], ['30', '30 dias'], ['custom', 'Personalizado']];
+    const dayStart = (v) => new Date(v + 'T00:00:00');
+    const fmtShort = (v) => dayStart(v).toLocaleDateString('pt-BR', { day: 'numeric', month: 'numeric' });
+    const range = (f) => {
+      if (f.period === 'sessao') return [lastAt || new Date(Date.now() - 7 * DAY), null];
+      if (f.period === '7') return [new Date(Date.now() - 7 * DAY), null];
+      if (f.period === '30') return [new Date(Date.now() - 30 * DAY), null];
+      if (f.period === 'custom') return [f.from ? dayStart(f.from) : null, f.to ? new Date(dayStart(f.to).getTime() + DAY) : null];
+      return [null, null];
+    };
+    const filtered = (f) => f.period !== 'all' || f.hard || !!f.term;
+    const build = (f, head) => {
+      let b = sb.from('diary_entries').select(head ? 'id' : '*', head ? { count: 'exact', head: true } : undefined).eq('patient_id', pid);
+      const [a, z] = range(f);
+      if (a) b = b.gte('created_at', a.toISOString());
+      if (z) b = b.lt('created_at', z.toISOString());
+      if (f.hard) b = b.in('mood', [0, 1]);
+      if (f.term) b = b.ilike('reflection', `%${f.term.replace(/[%_\\]/g, (c) => '\\' + c)}%`);
+      if (!filtered(f)) b = b.gte('created_at', monthsAgoStart(f.months).toISOString());
+      return head ? b : b.order('created_at', { ascending: false }).limit(1000);
+    };
+    const tagText = () => {
+      const parts = [];
+      if (st.period === 'custom') parts.push(st.from && st.to ? `${fmtShort(st.from)} a ${fmtShort(st.to)}` : st.from ? `desde ${fmtShort(st.from)}` : st.to ? `até ${fmtShort(st.to)}` : 'Personalizado');
+      else if (st.period !== 'all') parts.push(PERIODS.find((x) => x[0] === st.period)[1]);
+      if (st.hard) parts.push('Difícil e Baixo');
+      return parts.join(' · ');
+    };
+
+    shell(`<a class="back-l" href="#/paciente/${pid}">${icon('back', 18)}${esc(name)}</a>
+      ${header('Diário', `${name} · ${total} ${total === 1 ? 'registro' : 'registros'}`)}
+      <div class="dtools">
+        <label class="sr" for="dsearch">Buscar no diário</label>
+        <div class="srch">${icon('search', 18)}<input id="dsearch" type="search" placeholder="Buscar palavra…" autocomplete="off"></div>
+        <button type="button" class="fbtn" id="fopen" aria-haspopup="dialog">Filtros <span class="cnt" id="fcnt" hidden></span></button>
+      </div>
+      <div id="ftag"></div>
+      <div id="pinbox"></div>
+      <div id="dres" class="stack" aria-live="polite"></div>
+      <button type="button" class="btn ghost" id="dmore" hidden>Carregar meses anteriores</button>
+      <div class="fsheet" id="fsheet" hidden><div class="fpanel" role="dialog" aria-modal="true" aria-labelledby="fh">
+        <div class="row-between"><h2 id="fh" tabindex="-1">Filtros</h2><button type="button" class="icon-btn" id="fclose" aria-label="Fechar filtros">${icon('x', 18)}</button></div>
+        <p class="flbl">Período</p>
+        <div class="fchips" role="group" aria-label="Período">${PERIODS.map(([k, l]) => `<button type="button" class="fchip" data-period="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
+        <div class="fdates" id="fdates" hidden>
+          <label>De<input type="date" id="ffrom"></label>
+          <label>Até<input type="date" id="fto"></label>
+        </div>
+        <p class="flbl">Humor</p>
+        <div class="fchips" role="group" aria-label="Humor"><button type="button" class="fchip" data-hard="0" aria-pressed="true">Todos</button><button type="button" class="fchip" data-hard="1" aria-pressed="false">Só Difícil e Baixo</button></div>
+        <div class="row-between"><button type="button" class="btn-link" id="fclear">Limpar</button><button type="button" class="btn" id="fapply" style="flex:1;margin-left:16px">Ver registros</button></div>
+      </div></div>`, 'pacientes');
+
+    let notes = {};
+    async function loadNotes() {
+      const rows = await q(sb.from('diary_notes').select('entry_id,note,pinned').eq('patient_id', pid));
+      notes = Object.fromEntries(rows.map((r) => [r.entry_id, r]));
+      const pinIds = rows.filter((r) => r.pinned).map((r) => r.entry_id);
+      const pins = pinIds.length ? await q(sb.from('diary_entries').select('id,mood,reflection,created_at').in('id', pinIds).order('created_at', { ascending: false })) : [];
+      const short = (t) => { const x = String(t || '').replace(/[*_]/g, '').replace(/\s+/g, ' ').trim(); return x.length > 70 ? x.slice(0, 70) + '…' : x; };
+      $('#pinbox').innerHTML = pins.length ? `<section class="toleva"><div class="row-between"><strong>📌 Levar para a sessão</strong><span class="muted small">${pins.length} ${pins.length === 1 ? 'registro' : 'registros'}</span></div>
+        <ul>${pins.map((e) => `<li><a href="#" data-goto="${e.id}"><b>${esc(fmtDate(e.created_at))} ${esc(fmtTime(e.created_at))}</b> · ${MOODS[e.mood] || 'sem humor'} — ${esc(short((notes[e.id] && notes[e.id].note) || e.reflection) || 'sem texto')}</a></li>`).join('')}</ul></section>` : '';
+      $$('[data-goto]').forEach((a) => a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const el = document.getElementById('e-' + a.dataset.goto);
+        if (el) { const d = el.closest('details'); if (d) d.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); }
+        else toast('Esse registro está fora do período mostrado. Ajuste os filtros para vê-lo.');
+      }));
+    }
+    async function saveNote(id, patch) {
+      const cur = notes[id] || { note: null, pinned: false };
+      const next = { ...cur, ...patch };
+      if (!next.note && !next.pinned) await q(sb.from('diary_notes').delete().eq('entry_id', id));
+      else await q(sb.from('diary_notes').upsert({ entry_id: id, patient_id: pid, note: next.note || null, pinned: !!next.pinned }));
+    }
+    function bindNotes() {
+      $$('[data-pin]').forEach((b) => b.addEventListener('click', async () => {
+        const on = b.getAttribute('aria-pressed') !== 'true';
+        b.disabled = true;
+        try { await saveNote(b.dataset.pin, { pinned: on }); b.setAttribute('aria-pressed', String(on)); await loadNotes(); } catch (err) { /* toast */ }
+        b.disabled = false;
+      }));
+      $$('[data-note]').forEach((b) => b.addEventListener('click', () => {
+        const id = b.dataset.note;
+        const art = document.getElementById('e-' + id);
+        if (art.querySelector('.nedit')) return;
+        const box = document.createElement('div');
+        box.className = 'nedit';
+        box.innerHTML = `<label class="sr" for="n-${id}">Nota privada</label><textarea id="n-${id}" rows="3" class="private" placeholder="Só você vê. Ex.: explorar isso na sessão"></textarea>
+          <div class="ftools"><button type="button" class="btn sm">Salvar nota</button><button type="button" class="btn sm ghost">Cancelar</button>${notes[id] && notes[id].note ? '<button type="button" class="btn-link danger">Apagar nota</button>' : ''}</div>`;
+        art.appendChild(box);
+        const ta = box.querySelector('textarea');
+        ta.value = (notes[id] && notes[id].note) || '';
+        ta.focus();
+        const [save, cancel, del] = box.querySelectorAll('button');
+        const done = async (val) => {
+          save.disabled = true;
+          try { await saveNote(id, { note: val }); await loadNotes(); load(); toast(val ? 'Nota salva.' : 'Nota apagada.'); } catch (err) { save.disabled = false; }
+        };
+        save.addEventListener('click', () => done(ta.value.trim() || null));
+        cancel.addEventListener('click', () => box.remove());
+        if (del) del.addEventListener('click', () => { if (confirm('Apagar esta nota privada?')) done(null); });
+      }));
+    }
+    async function load() {
+      $('#dres').innerHTML = '<p class="muted small">Carregando…</p>';
+      const rows = await q(build(st));
+      const n = (st.period !== 'all') + (st.hard ? 1 : 0);
+      $('#fcnt').hidden = !n; $('#fcnt').textContent = n;
+      const tt = tagText();
+      $('#ftag').innerHTML = tt ? `<button type="button" class="atag" id="tagx" aria-label="Remover filtros: ${esc(tt)}">${esc(tt)} · ${rows.length} ${rows.length === 1 ? 'registro' : 'registros'} ${icon('x', 14)}</button>` : '';
+      if ($('#tagx')) $('#tagx').addEventListener('click', () => { st.period = 'all'; st.from = st.to = ''; st.hard = false; load(); });
+      $('#dres').innerHTML = rows.length ? monthGroups(rows, { bar: true, open: filtered(st) ? 'all' : 'first', notes })
+        : `<section class="card empty"><p>Nenhum registro encontrado${st.term ? ` para “${esc(st.term)}”` : ''}${tt ? ' com esses filtros' : ''}.</p>${filtered(st) ? '<button type="button" class="btn ghost" id="dclear">Limpar filtros e busca</button>' : ''}</section>`;
+      if ($('#dclear')) $('#dclear').addEventListener('click', () => { st.period = 'all'; st.from = st.to = ''; st.hard = false; st.term = ''; $('#dsearch').value = ''; load(); });
+      bindClamp();
+      bindNotes();
+      highlight($('#dres'), st.term);
+      if (!filtered(st)) {
+        const older = (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', pid).lt('created_at', monthsAgoStart(st.months).toISOString())).count || 0;
+        $('#dmore').hidden = !older;
+      } else $('#dmore').hidden = true;
+    }
+    $('#dmore').addEventListener('click', () => { st.months += 3; load(); });
+    let tmr;
+    $('#dsearch').addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => { st.term = $('#dsearch').value.trim(); load(); }, 350); });
+
+    // painel de filtros
+    const sheet = $('#fsheet');
+    const paint = () => {
+      $$('[data-period]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.period === draft.period)));
+      $$('[data-hard]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.hard === '1') === draft.hard)));
+      $('#fdates').hidden = draft.period !== 'custom';
+      $('#ffrom').value = draft.from; $('#fto').value = draft.to;
+      clearTimeout(paint.t);
+      paint.t = setTimeout(async () => {
+        const c = (await build({ ...draft, term: st.term, months: st.months }, true)).count;
+        $('#fapply').textContent = c == null ? 'Ver registros' : `Ver ${c} ${c === 1 ? 'registro' : 'registros'}`;
+      }, 200);
+    };
+    const openSheet = () => { draft = { period: st.period, from: st.from, to: st.to, hard: st.hard }; sheet.hidden = false; document.body.classList.add('sheet-open'); paint(); $('#fh').focus(); };
+    const closeSheet = () => { sheet.hidden = true; document.body.classList.remove('sheet-open'); $('#fopen').focus(); };
+    $('#fopen').addEventListener('click', openSheet);
+    $('#fclose').addEventListener('click', closeSheet);
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
+    sheet.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+    $$('[data-period]').forEach((b) => b.addEventListener('click', () => { draft.period = draft.period === b.dataset.period ? 'all' : b.dataset.period; paint(); }));
+    $$('[data-hard]').forEach((b) => b.addEventListener('click', () => { draft.hard = b.dataset.hard === '1'; paint(); }));
+    $('#ffrom').addEventListener('change', () => { draft.from = $('#ffrom').value; paint(); });
+    $('#fto').addEventListener('change', () => { draft.to = $('#fto').value; paint(); });
+    $('#fclear').addEventListener('click', () => { draft = { period: 'all', from: '', to: '', hard: false }; paint(); });
+    $('#fapply').addEventListener('click', () => {
+      if (draft.period === 'custom' && draft.from && draft.to && draft.from > draft.to) return toast('A data “De” precisa ser antes da data “Até”.', true);
+      Object.assign(st, draft); closeSheet(); load();
+    });
+    await loadNotes();
+    await load();
   }
 
   // Terapeuta: ver o termo exatamente como o paciente vê
@@ -2047,6 +2350,7 @@
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/termo$/))) return await viewPatientTerms(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/roda-relatorio$/))) return await viewWheelReport(m[1]);
+        if ((m = h.match(/^#\/paciente\/([\w-]+)\/diario(?:\/(novos))?$/))) return await viewPatientDiary(m[1], m[2]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
         if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
