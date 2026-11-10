@@ -435,6 +435,7 @@
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
+    trend: '<path d="M4 18c3-6 6-9 8-9s4 2 8-4"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="5" r="2"/>',
     wheel: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/>'
   };
   const icon = (n, size) => `<svg width="${size || 22}" height="${size || 22}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
@@ -1195,6 +1196,316 @@
     $('#wprint').addEventListener('click', () => window.print());
   }
 
+
+  /* ================= exercício "Antes e depois do novo" =================
+     A terapeuta libera (tema + data opcional). O paciente preenche 3 etapas em ordem.
+     A comparação só aparece para o paciente depois que a terapeuta libera. */
+  const NOV_TITLE = 'Antes e depois do novo';
+  const BODY_CHIPS = ['Aperto no peito', 'Inquietação', 'Frio na barriga', 'Tensão no corpo', 'Cansaço', 'Calma', 'Nada específico'];
+  const isoDay = (d) => { const x = new Date(d); return new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const fmtDM = (d) => (d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '');
+  const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return isoDay(x); };
+  const NOV_SIT = {
+    1: { label: 'Mais leve do que o imaginado', h: 'Foi mais leve do que você imaginava' },
+    2: { label: 'Parecido com o imaginado', h: 'Foi mais ou menos como você imaginava' },
+    3: { label: 'Mais difícil do que o imaginado', h: 'Foi mais difícil do que você imaginava, e você atravessou' },
+    4: { label: 'Pesado no dia, mais leve depois', h: 'No dia foi pesado. Com alguns dias de distância, ficou mais leve' },
+    5: { label: 'Decidiu não ir', h: 'Você escolheu não ir' }
+  };
+  const novStep = (steps, n) => steps.find((s) => s.step === n);
+  function novSituation(steps) {
+    const s1 = novStep(steps, 1), s2 = novStep(steps, 2), s3 = novStep(steps, 3);
+    if (!s1 || !s2 || !s3) return null;
+    if (!s2.went) return 5;
+    const a = s1.difficulty, b = s2.difficulty, c = s3.difficulty;
+    if (b >= a + 2) return c <= b - 2 ? 4 : 3;
+    if (a - b >= 2) return 1;
+    return 2;
+  }
+  const novPinned = (ex, sit) => (ex.pinned == null ? sit === 3 || sit === 5 : ex.pinned);
+  function novSitText(sit, steps) {
+    const a = (novStep(steps, 1) || {}).difficulty, b = (novStep(steps, 2) || {}).difficulty, c = (novStep(steps, 3) || {}).difficulty;
+    return {
+      1: `Antes, você imaginou ${a} de dificuldade. No dia, deu ${b}. Hoje, olhando para trás, você deu ${c}.`,
+      2: 'Você conhecia bem o tamanho desse desafio. Isso também é autoconhecimento.',
+      3: `Antes, você imaginou ${a}. No dia, deu ${b}. Mesmo assim, você foi até o fim.`,
+      4: 'O tempo também muda a forma como vemos as coisas.',
+      5: 'Olhar para o que pesou nessa decisão já é um passo.'
+    }[sit];
+  }
+  // passo seguinte (1..3) ou 4 = concluído
+  const novNext = (steps) => [1, 2, 3].find((n) => !novStep(steps, n)) || 4;
+  function novStepInfo(ex) {
+    const d = ex.event_date;
+    return [
+      ['Antes', d ? `Até ${fmtDM(d)}, antes de acontecer` : 'Antes de acontecer'],
+      ['Logo depois', d ? `No dia ${fmtDM(d)}, depois que acontecer` : 'Logo depois que acontecer'],
+      ['Alguns dias depois', d ? `Sugestão: a partir de ${fmtDM(addDays(d, 3))}` : 'Alguns dias depois']
+    ];
+  }
+  function novBars(steps, sit) {
+    const s1 = novStep(steps, 1), s2 = novStep(steps, 2), s3 = novStep(steps, 3);
+    const col = (v, cls, lab) => `<div><b>${v}</b><i class="${cls}" style="height:${(Number(v) || 0) * 11 + 6}px"></i><span>${lab}</span></div>`;
+    if (sit === 5) {
+      return `<div class="nbars two">${col(s1.difficulty, 'n1', 'Antes<br>(imaginado)')}<div><b>${esc(MOODS[s2.mood])}</b><i class="n0"></i><span>Como se sentiu<br>com a decisão</span></div></div>`;
+    }
+    return `<div class="nbars" role="img" aria-label="Dificuldade: antes ${s1.difficulty}, logo depois ${s2.difficulty}, alguns dias depois ${s3.difficulty}">
+      ${col(s1.difficulty, 'n1', 'Antes<br>(imaginado)')}${col(s2.difficulty, 'n2', 'Logo depois<br>(vivido)')}${col(s3.difficulty, 'n3', 'Dias depois<br>(olhando para trás)')}</div>`;
+  }
+  function novCompareHtml(ex, steps) {
+    const sit = novSituation(steps);
+    if (!sit) return '';
+    const s1 = novStep(steps, 1), s2 = novStep(steps, 2), s3 = novStep(steps, 3);
+    const A = (s, k) => ((s && s.answers && s.answers[k]) || '').trim();
+    const right = sit === 5 ? ['O que pesou', A(s2, 'weighed')] : ['Aconteceu', A(s2, 'happened')];
+    return `<section class="insight"><span class="kicker">O que seus registros mostram</span><h2>${esc(NOV_SIT[sit].h)}</h2><p>${esc(novSitText(sit, steps))}</p></section>
+      <section class="card"><h2>${sit === 5 ? 'Antes e depois da decisão' : 'Quão difícil foi'}</h2>${novBars(steps, sit)}</section>
+      <section class="card"><h2>${sit === 5 ? 'O que você imaginou × o que pesou' : 'O que você imaginou × o que aconteceu'}</h2>
+        <div class="vs"><div class="a"><span class="kicker-s">Imaginei</span>${esc(A(s1, 'imagine') || '—')}</div><div class="b"><span class="kicker-s">${right[0]}</span>${esc(right[1] || '—')}</div></div>
+        ${A(s3, 'helped') ? `<p><span class="muted small">O que te ajudou:</span> ${esc(A(s3, 'helped'))}</p>` : ''}
+        ${A(s3, 'remember') ? `<p class="quote">${esc(A(s3, 'remember'))}</p>` : ''}
+      </section>`;
+  }
+  // respostas de cada etapa (só leitura)
+  function novAnswersHtml(steps) {
+    const Q = {
+      1: [['imagine', 'O que imaginou que ia acontecer'], ['body', 'O que o corpo sentia']],
+      2: [['happened', 'O que aconteceu de fato'], ['different', 'O que foi diferente do imaginado'], ['weighed', 'O que pesou mais na hora']],
+      3: [['helped', 'O que ajudou a passar por isso'], ['view', 'Como vê a decisão hoje'], ['learned', 'O que aprendeu sobre si'], ['remember', 'O que quer lembrar da próxima vez']]
+    };
+    const names = ['', 'Antes', 'Logo depois', 'Alguns dias depois'];
+    return steps.slice().sort((x, y) => x.step - y.step).map((s) => {
+      const rows = Q[s.step].map(([k, l]) => {
+        let v = s.answers && s.answers[k];
+        if (Array.isArray(v)) v = v.join(', ');
+        return v ? `<div><dt>${l}</dt><dd>${esc(v)}</dd></div>` : '';
+      }).join('');
+      return `<div class="nans"><p class="sub-h">${names[s.step]} · ${esc(fmtDate(s.created_at))} ${esc(fmtTime(s.created_at))}</p>
+        <p class="small">${moodTag(s.mood)} ${s.step === 2 && !s.went ? '<span class="muted">Decidiu não ir</span>' : s.difficulty != null ? `<span class="muted">Dificuldade:</span> <b>${s.difficulty}</b>` : ''}</p>
+        ${rows ? `<dl class="nanswers">${rows}</dl>` : ''}</div>`;
+    }).join('');
+  }
+
+  // Cartão do Início (paciente): uma chamada por exercício em andamento
+  function novHomeCards(exs, stepsBy, seenRes) {
+    const ico = `<span class="hl-ico">${icon('trend', 22)}</span>`;
+    return exs.map((ex) => {
+      const st = stepsBy[ex.id] || [];
+      const n = novNext(st);
+      if (n <= 3) {
+        const txt = {
+          1: [NOV_TITLE, `Sobre: ${ex.topic}. Como você está se sentindo?`],
+          2: ['E aí, como foi?', `Sobre: ${ex.topic}. Leva 2 minutos, registre enquanto está fresco.`],
+          3: ['Com alguns dias de distância', `Como você vê ${ex.topic} agora?`]
+        }[n];
+        return `<a class="highlight" href="#/exercicio/${ex.id}">${ico}<span><span class="kicker-amber">EXERCÍCIO · ETAPA ${n} DE 3<span class="newtag">NOVO</span></span><strong>${esc(txt[0])}</strong><span class="muted small">${esc(txt[1])}</span></span></a>`;
+      }
+      if (!ex.compare_released_at) return `<a class="highlight soft" href="#/exercicio/${ex.id}"><span class="hl-ico">${icon('check', 22)}</span><span><span class="kicker-amber">EXERCÍCIO CONCLUÍDO</span><strong>${NOV_TITLE}</strong><span class="muted small">Aguardando a sessão para ver o resultado</span></span></a>`;
+      if (!seenRes.has(ex.id)) return `<a class="highlight" href="#/exercicio/${ex.id}">${ico}<span><span class="kicker-amber">RESULTADO LIBERADO<span class="newtag">NOVO</span></span><strong>Veja o que seus registros mostram</strong><span class="muted small">${esc(NOV_TITLE)} · ${esc(ex.topic)}</span></span></a>`;
+      return '';
+    }).join('');
+  }
+  async function novLoadMine() {
+    const exs = await q(sb.from('novelty_exercises').select('*').eq('patient_id', me.id).order('created_at', { ascending: false }));
+    const steps = exs.length ? await q(sb.from('novelty_steps').select('*').in('exercise_id', exs.map((e) => e.id))) : [];
+    const by = {};
+    steps.forEach((s) => { (by[s.exercise_id] = by[s.exercise_id] || []).push(s); });
+    return { exs, by };
+  }
+
+  // Paciente: visão geral do exercício (etapas e, quando liberada, a comparação)
+  async function viewNovelty(id) {
+    loading();
+    const ex = await q(sb.from('novelty_exercises').select('*').eq('id', id).maybeSingle());
+    if (!ex) { go('#/'); return; }
+    const steps = await q(sb.from('novelty_steps').select('*').eq('exercise_id', id));
+    const n = novNext(steps);
+    const info = novStepInfo(ex);
+    const s2 = novStep(steps, 2);
+    const stepRows = info.map(([t, sub], i) => {
+      const k = i + 1, done = novStep(steps, k);
+      const dot = done ? `<span class="dot ok">${icon('check', 16)}</span>` : `<span class="dot${k === n ? ' now' : ''}">${k}</span>`;
+      const right = done ? `<span class="muted small">Feito em ${esc(toDate(done.created_at).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }))}</span>`
+        : k === n ? `<a class="btn sm" href="#/exercicio/${id}/etapa/${k}">Preencher</a>` : '<span class="muted small">Em breve</span>';
+      const subTxt = k === 3 && s2 && !s2.went ? 'Olhando para trás' : sub;
+      return `<li>${dot}<span class="t"><strong>${t}</strong><span>${esc(subTxt)}</span></span>${right}</li>`;
+    }).join('');
+    const released = !!ex.compare_released_at;
+    shell(`<a class="back-l" href="#/">${icon('back', 18)}Início</a>
+      ${header(NOV_TITLE, `Sobre: ${ex.topic}${ex.event_date ? ` · ${fmtDM(ex.event_date)}` : ''}`)}
+      ${n === 4 && released ? novCompareHtml(ex, steps) : ''}
+      ${n === 4 && !released ? `<section class="card done-card"><span class="big-ok">${icon('check', 22)}</span><h2>Pronto! Você completou as 3 etapas.</h2><p class="muted">Vamos olhar o resultado juntos na próxima sessão.</p></section>` : ''}
+      ${n === 1 ? `<section class="card"><p>Nossa mente costuma imaginar o novo como algo maior do que ele é. Neste exercício, você vai registrar como se sente <strong>antes</strong>, <strong>logo depois</strong> e <strong>alguns dias depois</strong>.</p><p class="muted small">Não existe resposta certa. Escreva do seu jeito.</p></section>` : ''}
+      <section class="card"><ol class="steps">${stepRows}</ol></section>
+      ${steps.length ? `<details class="card"><summary>Suas respostas</summary><div class="stack">${novAnswersHtml(steps)}</div></details>` : ''}`, 'inicio');
+    markViewed('exercise', [id]);
+    if (n === 4 && released) markViewed('exercise_result', [id]);
+  }
+
+  // Paciente: formulário de uma etapa
+  async function viewNoveltyStep(id, k) {
+    loading();
+    const ex = await q(sb.from('novelty_exercises').select('*').eq('id', id).maybeSingle());
+    if (!ex) { go('#/'); return; }
+    const steps = await q(sb.from('novelty_steps').select('*').eq('exercise_id', id));
+    if (novNext(steps) !== k) { go(`#/exercicio/${id}`); return; }
+    const s1 = novStep(steps, 1), s2 = novStep(steps, 2);
+    const went2 = !s2 || s2.went;
+    const harder = k === 3 && s2 && s2.went && s2.difficulty >= s1.difficulty + 2;
+    const moods = (lab) => `<section class="card" id="mcard"><h2 id="mh">${lab}</h2>
+      <p class="mwarn" id="mwarn" role="alert" hidden>💛 Antes de salvar, escolha como você está. Pode ser o que mais se aproxima.</p>
+      <div class="moods" role="group" aria-labelledby="mh">${MOODS.map((m, i) => `<button type="button" class="mood" data-mood="${i}" aria-pressed="false">${m}</button>`).join('')}</div></section>`;
+    const slider = (lab) => `<section class="card"><label for="diff">${lab}</label>
+      <div class="dscale"><output id="dout" for="diff">5</output><input id="diff" type="range" min="0" max="10" step="1" value="5">
+      <div class="scale-ends"><span>0 · Tranquilo</span><span>Muito difícil · 10</span></div></div></section>`;
+    const ta = (id2, lab, rows = 3, ph = '') => `<div class="field"><label for="${id2}">${lab}</label><textarea id="${id2}" rows="${rows}" placeholder="${esc(ph)}"></textarea></div>`;
+    let body = '';
+    if (k === 1) {
+      body = `${moods(`Como você está se sentindo sobre ${ex.topic}?`)}${slider('De 0 a 10, quão difícil você imagina que vai ser?')}
+        <section class="card">${ta('imagine', 'O que você imagina que vai acontecer?')}
+        <fieldset class="field"><legend>O que seu corpo está sentindo?</legend><div class="chips">${BODY_CHIPS.map((c) => `<button type="button" class="pill" data-chip="${esc(c)}" aria-pressed="false">${esc(c)}</button>`).join('')}</div></fieldset></section>`;
+    } else if (k === 2) {
+      body = `<div id="wentBox">${moods('Como você está se sentindo agora?')}${slider('De 0 a 10, quão difícil foi de verdade?')}
+        <section class="card">${ta('happened', 'O que aconteceu de fato?')}${ta('different', 'Algo foi diferente do que você imaginava?', 2)}</section>
+        <button type="button" class="btn-link" id="notWent">Decidi não ir</button></div>`;
+    } else if (went2) {
+      body = `${moods('Como você está se sentindo hoje?')}${slider('Olhando para trás, de 0 a 10, quão difícil foi?')}
+        <section class="card">${harder ? ta('helped', 'O que te ajudou a passar por isso?', 2) : ''}${ta('learned', 'O que você aprendeu sobre você?', 2)}
+        ${ta('remember', 'Da próxima vez que algo novo aparecer, o que você quer lembrar?', 2)}</section>`;
+    } else {
+      body = `${moods('Como você está se sentindo hoje?')}
+        <section class="card">${ta('view', 'Olhando para trás, como você vê essa decisão?', 3)}${ta('remember', 'Da próxima vez que algo novo aparecer, o que você quer lembrar?', 2)}</section>`;
+    }
+    const names = ['', 'Antes', 'Logo depois', 'Olhando para trás'];
+    const titles = ['', 'Como você está agora?', 'E agora, como foi?', 'Com alguns dias de distância'];
+    shell(`<a class="back-l" href="#/exercicio/${id}">${icon('back', 18)}Exercício</a>
+      <header class="hd"><div><span class="sec" style="margin:0">Etapa ${k} de 3 · ${names[k]}</span><h1>${titles[k]}</h1><p class="muted">Sobre: ${esc(ex.topic)}</p></div></header>
+      <form id="nf" class="stack" novalidate>${body}
+        <p class="muted small">Depois de salvar, as respostas desta etapa não podem ser alteradas.</p>
+        <button class="btn" type="submit">${k === 3 ? 'Concluir exercício' : `Salvar etapa ${k}`}</button></form>`, 'inicio');
+
+    let mood = null, went = true;
+    const bindMoods = () => $$('[data-mood]').forEach((b) => b.addEventListener('click', () => {
+      mood = Number(b.dataset.mood);
+      $$('[data-mood]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      $('#mcard').classList.remove('need'); $('#mwarn').hidden = true;
+    }));
+    const bindSlider = () => { const r = $('#diff'); if (r) { const upd = () => { $('#dout').textContent = r.value; r.style.setProperty('--p', r.value * 10 + '%'); }; r.addEventListener('input', upd); upd(); } };
+    bindMoods(); bindSlider();
+    $$('[data-chip]').forEach((b) => b.addEventListener('click', () => b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true'))));
+    if ($('#notWent')) $('#notWent').addEventListener('click', () => {
+      went = false; mood = null;
+      $('#wentBox').innerHTML = `${moods('Como você se sente com essa decisão?')}
+        <section class="card">${ta('weighed', 'O que pesou mais na hora?', 3)}<p class="muted small">Sem julgamento: o exercício continua, e isso também é algo que você está aprendendo sobre você.</p></section>
+        <button type="button" class="btn-link" id="wentBack">Na verdade, eu fui</button>`;
+      bindMoods();
+      $('#wentBack').addEventListener('click', () => viewNoveltyStep(id, k));
+    });
+    $('#nf').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (mood == null) {
+        $('#mcard').classList.add('need'); $('#mwarn').hidden = false;
+        $('#mcard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const val = (x) => ($('#' + x) ? $('#' + x).value.trim() : '');
+      const answers = {};
+      ['imagine', 'happened', 'different', 'weighed', 'helped', 'learned', 'remember', 'view'].forEach((x) => { const v = val(x); if (v) answers[x] = v; });
+      const chips = $$('[data-chip][aria-pressed="true"]').map((b) => b.dataset.chip);
+      if (chips.length) answers.body = chips;
+      const isWent = k === 1 ? true : k === 2 ? went : went2;
+      const row = { exercise_id: id, step: k, mood, went: isWent, answers, difficulty: isWent && $('#diff') ? Number($('#diff').value) : null };
+      const btn = $('#nf button[type=submit]'); btn.disabled = true;
+      try {
+        await q(sb.from('novelty_steps').insert(row));
+        toast(k === 3 ? 'Exercício concluído. Obrigada por se dedicar!' : `Etapa ${k} salva.`);
+        go(`#/exercicio/${id}`);
+      } catch (err) { btn.disabled = false; }
+    });
+  }
+
+  // Terapeuta: cartão na ficha
+  function novTherapistCard(pid, exs, by) {
+    const rows = exs.map((ex) => {
+      const st = by[ex.id] || [];
+      const n = novNext(st), sit = novSituation(st);
+      const status = n <= 3 ? `<span class="status pending">Etapa ${n} de 3</span>`
+        : ex.compare_released_at ? `<span class="status ok">${icon('check', 16)}Comparação liberada</span>` : '<span class="status pending">Comparação não liberada</span>';
+      return `<div class="nex">
+        <div class="term-row"><div class="term-info"><strong>${esc(ex.topic)}</strong><span class="muted small">${ex.event_date ? `Evento em ${esc(fmtDM(ex.event_date))} · ` : ''}liberado em ${esc(fmtDate(ex.created_at))}</span></div>${status}</div>
+        ${sit ? `<div class="sit${sit === 3 || sit === 5 ? ' hard' : ''}"><b>${esc(NOV_SIT[sit].label)}</b>${sit === 3 || sit === 5 ? '<span>Vale conversar na sessão.</span>' : ''}</div>` : ''}
+        ${novPinned(ex, sit) ? '<span class="pinlink small-pin">📌 Levar para a sessão</span>' : ''}
+        <a class="btn sm ghost" href="#/paciente/${pid}/exercicio/${ex.id}">Ver respostas${sit ? ' e comparação' : ''}</a></div>`;
+    }).join('');
+    return `<section class="card" id="novcard"><h2>${NOV_TITLE}</h2>
+      <p class="muted small">O paciente registra como se sente antes, logo depois e alguns dias depois de algo novo. A comparação só aparece para ele quando você libera.</p>
+      ${rows}
+      <details class="cond"${exs.length ? '' : ' open'}><summary>Liberar ${exs.length ? 'novo ' : ''}exercício</summary>
+        <form id="novform" class="stack">
+          <div class="grid2"><div class="field"><label for="novtopic">Sobre o quê?</label><input id="novtopic" type="text" maxlength="200" placeholder="Ex.: a entrevista na clínica" required></div>
+          <div class="field"><label for="novdate">Data do evento <span class="muted small">(opcional)</span></label><input id="novdate" type="date"></div></div>
+          <p class="muted small">Escreva como completaria a frase “Como você vê ___ agora?”, por exemplo “a entrevista na clínica”.</p>
+          <button class="btn sm" type="submit">Liberar exercício</button></form></details></section>`;
+  }
+  function bindNovForm(pid) {
+    const f = $('#novform');
+    if (!f) return;
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const topic = $('#novtopic').value.trim();
+      if (!topic) return toast('Escreva sobre o que é o exercício.', true);
+      try {
+        await q(sb.from('novelty_exercises').insert({ patient_id: pid, topic, event_date: $('#novdate').value || null }));
+        toast('Exercício liberado. O paciente vê no Início.');
+        viewPatient(pid);
+      } catch (err) { /* toast */ }
+    });
+  }
+
+  // Terapeuta: respostas completas, comparação e liberação
+  async function viewNoveltyTherapist(pid, id) {
+    loading();
+    const [ex, steps, p] = await Promise.all([
+      q(sb.from('novelty_exercises').select('*').eq('id', id).maybeSingle()),
+      q(sb.from('novelty_steps').select('*').eq('exercise_id', id)),
+      q(sb.from('profiles').select('id,full_name,email').eq('id', pid).maybeSingle())
+    ]);
+    if (!ex || !p) { go(`#/paciente/${pid}`); return; }
+    const n = novNext(steps), sit = novSituation(steps), pinned = novPinned(ex, sit);
+    shell(`<a class="back-l" href="#/paciente/${pid}">${icon('back', 18)}${esc(p.full_name || p.email)}</a>
+      ${header(NOV_TITLE, `Sobre: ${ex.topic}`)}
+      <section class="card">
+        <div class="term-row"><h2>Situação</h2>${n <= 3 ? `<span class="status pending">Etapa ${n} de 3</span>` : ex.compare_released_at ? `<span class="status ok">${icon('check', 16)}Liberada em ${esc(fmtDate(ex.compare_released_at))}</span>` : '<span class="status pending">Comparação não liberada</span>'}</div>
+        ${sit ? `<div class="sit${sit === 3 || sit === 5 ? ' hard' : ''}"><b>${esc(NOV_SIT[sit].label)}</b>${sit === 3 || sit === 5 ? '<span>Vale conversar na sessão.</span>' : ''}</div>` : '<p class="muted small">A comparação aparece aqui quando o paciente concluir as 3 etapas.</p>'}
+        <div class="ftools"><button type="button" class="pin" id="novpin" aria-pressed="${pinned}">📌 Levar para a sessão</button></div>
+        ${sit && !ex.compare_released_at ? '<button type="button" class="btn" id="novrel">Liberar comparação para o paciente</button><p class="muted small">Pode liberar durante a sessão, na hora de olhar juntos, ou depois.</p>' : ''}
+        ${ex.compare_released_at ? '<button type="button" class="btn-link" id="novunrel">Ocultar comparação do paciente</button>' : ''}
+      </section>
+      ${sit ? `<p class="sec">O que o paciente vê ${ex.compare_released_at ? '' : 'quando você liberar'}</p>${novCompareHtml(ex, steps)}` : ''}
+      <p class="sec">Respostas</p>
+      <section class="card">${steps.length ? novAnswersHtml(steps) : '<p class="muted">O paciente ainda não começou.</p>'}</section>
+      <details class="card"><summary>Editar tema e data</summary>
+        <form id="novedit" class="stack"><div class="grid2"><div class="field"><label for="ntopic">Sobre o quê?</label><input id="ntopic" type="text" maxlength="200"></div>
+        <div class="field"><label for="ndate">Data do evento <span class="muted small">(opcional)</span></label><input id="ndate" type="date"></div></div>
+        <button class="btn sm" type="submit">Salvar</button></form>
+        <button type="button" class="btn-link danger" id="novdel">Excluir exercício e respostas</button></details>`, 'pacientes');
+    $('#ntopic').value = ex.topic; $('#ndate').value = ex.event_date || '';
+    const upd = async (patch, msg) => { try { await q(sb.from('novelty_exercises').update(patch).eq('id', id)); if (msg) toast(msg); viewNoveltyTherapist(pid, id); } catch (err) { /* toast */ } };
+    $('#novpin').addEventListener('click', () => upd({ pinned: !pinned }));
+    if ($('#novrel')) $('#novrel').addEventListener('click', () => { if (confirm('Liberar a comparação? O paciente vai ver o resultado no app.')) upd({ compare_released_at: new Date().toISOString() }, 'Comparação liberada para o paciente.'); });
+    if ($('#novunrel')) $('#novunrel').addEventListener('click', () => upd({ compare_released_at: null }, 'Comparação oculta.'));
+    $('#novedit').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const topic = $('#ntopic').value.trim();
+      if (!topic) return toast('Escreva sobre o que é o exercício.', true);
+      upd({ topic, event_date: $('#ndate').value || null }, 'Exercício atualizado.');
+    });
+    $('#novdel').addEventListener('click', async () => {
+      if (!confirm('Excluir este exercício e todas as respostas do paciente? Isso não pode ser desfeito.')) return;
+      try { await q(sb.from('novelty_exercises').delete().eq('id', id)); toast('Exercício excluído.'); go(`#/paciente/${pid}`); } catch (err) { /* toast */ }
+    });
+  }
+
   // Terapeuta: tópico Roda da Vida na ficha
   function wheelTherapistCard(acc, entries) {
     const first = entries[0], last = entries[entries.length - 1];
@@ -1265,6 +1576,8 @@
       q(sb.from('wheel_entries').select('id').eq('patient_id', me.id).limit(1))
     ]);
     const latestSeen = latest[0] ? (await viewedSet('content')).has(latest[0].id) : true;
+    const nov = await novLoadMine();
+    const novCards = novHomeCards(nov.exs, nov.by, nov.exs.length ? await viewedSet('exercise_result') : new Set());
     const wheelCard = wheelAcc ? `<a class="highlight wheel-hl" href="#/roda"><span class="hl-ico">${icon('wheel', 22)}</span>
         <span><span class="kicker-amber">${wheelAny.length ? 'SUA RODA DA VIDA' : 'EXERCÍCIO LIBERADO'}</span><strong>${wheelAny.length ? 'Ver sua roda e evolução' : 'Faça sua Roda da Vida'}</strong></span></a>` : '';
     const tState = termsState(terms, lastConsent[0]);
@@ -1284,6 +1597,7 @@
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
+      ${novCards}
       ${wheelCard}
       ${installCard(true)}
       <section class="journey">
@@ -1361,6 +1675,8 @@
     const sMats = mySessions.length ? await q(sb.from('session_materials').select('*').in('session_id', mySessions.map((x) => x.id)).order('created_at')) : [];
     const sUrls = await signedUrls(sMats.map((m) => m.file_path));
     const sessHtml = sessionContentHtml(mySessions, sMats, sUrls);
+    const myNov = await q(sb.from('novelty_exercises').select('id,topic,created_at').eq('patient_id', me.id).order('created_at', { ascending: false }));
+    const novList = myNov.length ? `<h2 class="sec">Seus exercícios</h2>${myNov.map((x) => `<a class="item" href="#/exercicio/${x.id}"><span class="thumb">${icon('trend', 24)}</span><span class="item-body"><strong>${NOV_TITLE}</strong><span class="muted small">${esc(x.topic)}</span></span></a>`).join('')}` : '';
     const unlocked = new Set(unlocks.map((u) => u.phase_id));
     const filters = [['todos', 'Todos'], ['sessoes', 'Conteúdo Sessões'], ['video', 'Vídeos'], ['texto', 'Textos'], ['exercicio', 'Exercícios'], ['audio', 'Áudios'], ['pdf', 'PDFs']];
     const seen = await viewedSet('content');
@@ -1393,7 +1709,8 @@
 
     shell(`${header('Conteúdos', 'Liberados para você a cada etapa da jornada')}
       <div class="pills" role="group" aria-label="Filtrar por tipo">${filters.map(([k, l]) => `<button type="button" class="pill" data-f="${k}" aria-pressed="${k === filter}">${l}</button>`).join('')}</div>
-      <div id="list" class="stack">${list()}</div>`, 'conteudos');
+      <div id="list" class="stack">${list()}</div>
+      ${novList}`, 'conteudos');
     $$('[data-f]').forEach((b) => b.addEventListener('click', () => {
       filter = b.dataset.f;
       $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
@@ -1664,6 +1981,10 @@
     const total = countRes.count || sessions.length;
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const moodDiary = await q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', pid).gte('created_at', new Date(Date.now() - 42 * DAY).toISOString()));
+    const novExs = await q(sb.from('novelty_exercises').select('*').eq('patient_id', pid).order('created_at', { ascending: false }));
+    const novSteps = novExs.length ? await q(sb.from('novelty_steps').select('*').in('exercise_id', novExs.map((e) => e.id))) : [];
+    const novBy = {};
+    novSteps.forEach((x) => { (novBy[x.exercise_id] = novBy[x.exercise_id] || []).push(x); });
     const diaryTotal = (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', pid)).count || 0;
     const pinnedCount = (await sb.from('diary_notes').select('entry_id', { count: 'exact', head: true }).eq('patient_id', pid).eq('pinned', true)).count || 0;
     const sinceRef = lastSessionAt || new Date(Date.now() - 7 * DAY);
@@ -1746,6 +2067,7 @@
       </section>
       ${personalCard}
       ${wheelTherapistCard(wAcc, wEntries)}
+      ${novTherapistCard(pid, novExs, novBy)}
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
       ${moodChart(moodDiary, 'Bem-estar nas últimas semanas', 'Média do humor registrado pelo paciente no diário. Cada dia tem o mesmo peso, mesmo com vários registros.')}
@@ -1770,6 +2092,7 @@
       try { await q(sb.from('profiles').update({ active: true, deactivated_at: null }).eq('id', pid)); toast('Paciente reativado.'); viewPatient(pid); } catch (err) { /* toast */ }
     });
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
+    bindNovForm(pid);
     bindReceipt(cs, p);
     bindTermsForm(pid, () => viewPatient(pid));
     if ($('#wheel-release')) $('#wheel-release').addEventListener('click', async () => {
@@ -2351,6 +2674,7 @@
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/termo$/))) return await viewPatientTerms(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/roda-relatorio$/))) return await viewWheelReport(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/diario(?:\/(novos))?$/))) return await viewPatientDiary(m[1], m[2]);
+        if ((m = h.match(/^#\/paciente\/([\w-]+)\/exercicio\/([\w-]+)$/))) return await viewNoveltyTherapist(m[1], m[2]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
         if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
@@ -2358,6 +2682,8 @@
       }
       if (h === '#/acordos') return await viewTerms();
       if (h === '#/roda') return await viewWheel();
+      if ((m = h.match(/^#\/exercicio\/([\w-]+)\/etapa\/([123])$/))) return await viewNoveltyStep(m[1], Number(m[2]));
+      if ((m = h.match(/^#\/exercicio\/([\w-]+)$/))) return await viewNovelty(m[1]);
       if (h === '#/conteudos') return await viewContents();
       if (h === '#/diario') return await viewDiary();
       if (h === '#/sessoes') return await viewSessions();
