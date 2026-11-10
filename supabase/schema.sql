@@ -569,3 +569,9 @@ create policy views_therapist   on public.item_views for select to authenticated
 
 -- Faz o Supabase reconhecer a tabela nova na hora
 notify pgrst, 'reload schema';
+
+-- ===== migração 09 · tarefa ligada à sessão =====
+alter table public.tasks add column if not exists session_id uuid references public.sessions(id) on delete cascade;
+create index if not exists tasks_session_idx on public.tasks (session_id);
+
+notify pgrst, 'reload schema';

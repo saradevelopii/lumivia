@@ -1378,7 +1378,8 @@
       <h2 class="sec">Sessões</h2>
       ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
           ${s.summary ? `<h3 class="sub-h">Resumo</h3><p class="prose">${esc(s.summary)}</p>` : ''}
-          ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>` : ''}
+          ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>
+            <button type="button" class="btn sm ghost" data-clear-task="${s.id}">Remover tarefa desta sessão</button>` : ''}
           ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3><p class="prose">${esc(noteBy[s.id])}</p>` : ''}
           <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
         : '<p class="muted">Nenhuma sessão registrada.</p>'}
@@ -1434,15 +1435,34 @@
     }));
     $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
       const [table, id] = b.dataset.del.split(':');
-      try { await q(sb.from(table).delete().eq('id', id)); viewPatient(pid); } catch (err) { /* toast */ }
+      if (!confirm(table === 'goals' ? 'Remover esta meta do paciente?' : 'Remover esta tarefa do paciente?')) return;
+      try { await q(sb.from(table).delete().eq('id', id)); toast(table === 'goals' ? 'Meta removida.' : 'Tarefa removida.'); viewPatient(pid); } catch (err) { /* toast */ }
+    }));
+    // Tarefas criadas a partir de uma sessão: as novas ficam ligadas a ela (session_id);
+    // as antigas, criadas antes dessa ligação, são encontradas pelo mesmo texto.
+    async function removeSessionTasks(sid) {
+      const s = sessions.find((x) => x.id === sid);
+      await q(sb.from('tasks').delete().eq('session_id', sid));
+      if (s && s.weekly_task) await q(sb.from('tasks').delete().eq('patient_id', pid).is('session_id', null).eq('title', s.weekly_task));
+    }
+    $$('[data-clear-task]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Remover a tarefa desta sessão? Ela também sai da lista de tarefas do paciente.')) return;
+      const sid = b.dataset.clearTask;
+      try {
+        await removeSessionTasks(sid);
+        await q(sb.from('sessions').update({ weekly_task: null }).eq('id', sid));
+        toast('Tarefa removida.');
+        viewPatient(pid);
+      } catch (err) { /* toast */ }
     }));
     $$('[data-del-session]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Apagar esta sessão e seus materiais? Isso não pode ser desfeito.')) return;
+      if (!confirm('Apagar esta sessão, seus materiais e a tarefa criada a partir dela? Isso não pode ser desfeito.')) return;
       const sid = b.dataset.delSession;
       try {
         const mats = await q(sb.from('session_materials').select('file_path').eq('session_id', sid));
         const paths = mats.map((m) => m.file_path).filter(Boolean);
         if (paths.length) await sb.storage.from(BUCKET).remove(paths);
+        await removeSessionTasks(sid);
         await q(sb.from('sessions').delete().eq('id', sid));
         toast('Sessão apagada.');
         viewPatient(pid);
@@ -1528,7 +1548,7 @@
         for (const l of links.filter((x) => x.url)) {
           await q(sb.from('session_materials').insert({ session_id: s.id, title: l.title || l.url, url: l.url }));
         }
-        if (weekly_task && $('#astask').checked) await q(sb.from('tasks').insert({ patient_id: pid, title: weekly_task }));
+        if (weekly_task && $('#astask').checked) await q(sb.from('tasks').insert({ patient_id: pid, title: weekly_task, session_id: s.id }));
         toast('Sessão liberada para o paciente.');
         go('#/paciente/' + pid);
       } catch (err) {
