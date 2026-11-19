@@ -748,3 +748,24 @@ create trigger diary_dates before insert or update on public.diary_entries
   for each row execute function public.diary_dates();
 
 notify pgrst, 'reload schema';
+
+-- ===== migração 14 · Novidades do app =====
+create table if not exists public.app_news (
+  id           uuid primary key default gen_random_uuid(),
+  title        text not null check (char_length(title) between 1 and 120),
+  body         text check (char_length(body) <= 4000),
+  video_url    text check (char_length(video_url) <= 500),
+  published_at timestamptz not null default now()
+);
+alter table public.app_news enable row level security;
+drop policy if exists news_therapist on public.app_news;
+create policy news_therapist on public.app_news for all to authenticated
+  using (public.is_therapist()) with check (public.is_therapist());
+drop policy if exists news_read on public.app_news;
+create policy news_read on public.app_news for select to authenticated using (public.is_active());
+
+-- selo "Novo" também para as novidades
+alter table public.item_views drop constraint if exists item_views_kind_check;
+alter table public.item_views add constraint item_views_kind_check check (kind in ('content', 'session', 'exercise', 'exercise_result', 'news'));
+
+notify pgrst, 'reload schema';

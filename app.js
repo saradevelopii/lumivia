@@ -431,6 +431,7 @@
     leaf: '<path d="M12 21c-4-3-7-6.5-7-10a4.5 4.5 0 0 1 7-3.7A4.5 4.5 0 0 1 19 11c0 3.5-3 7-7 10z"/><path d="M12 7.3V21"/>',
     back: '<path d="M15 18l-6-6 6-6"/>',
     chevron: '<path d="M9 18l6-6-6-6"/>',
+    spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
@@ -880,6 +881,7 @@
           : `<p><strong>${esc(me.full_name || '—')}</strong></p><p class="muted small">Para corrigir seu nome, fale com sua terapeuta.</p>`}
       </section>
       ${isT ? '' : termsCard(myT, myCs, { therapist: false })}
+      ${isT ? '' : `<a class="card link-card" href="#/novidades">${icon('spark', 22)}<span><strong>Novidades do Lumivia</strong><span class="muted small">O que mudou no app</span></span>${icon('chevron', 18)}</a>`}
       ${installCard(false)}
       <section class="card">
         <form id="pw" class="stack">
@@ -1669,6 +1671,84 @@
     });
   }
 
+  /* ================= NOVIDADES DO APP ================= */
+  const newsDate = (d) => toDate(d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  function newsItem(n, isNew) {
+    const yid = ytId(n.video_url);
+    return `<article class="card news" id="n-${n.id}"><p class="kicker-amber">${esc(newsDate(n.published_at))}${isNew ? '<span class="newtag">NOVO</span>' : ''}</p>
+      <h2>${esc(n.title)}</h2>${n.body ? richBlock(n.body) : ''}${yid ? ytPlayer(yid, n.title) : ''}</article>`;
+  }
+  // Início (paciente): aparece só enquanto houver novidade não vista
+  async function newsHomeCard() {
+    const news = await q(sb.from('app_news').select('id,title').order('published_at', { ascending: false }).limit(20));
+    if (!news.length) return '';
+    const seen = await viewedSet('news');
+    const fresh = news.filter((n) => !seen.has(n.id));
+    if (!fresh.length) return '';
+    return `<a class="highlight news-hl" href="#/novidades"><span class="hl-ico">${icon('spark', 22)}</span><span>
+      <span class="kicker-amber">NOVIDADE NO LUMIVIA<span class="newtag">NOVO</span></span><strong>${esc(fresh[0].title)}</strong>
+      ${fresh.length > 1 ? `<span class="muted small">+ ${fresh.length - 1} ${fresh.length - 1 === 1 ? 'novidade' : 'novidades'}</span>` : ''}</span></a>`;
+  }
+  async function viewNews() {
+    loading();
+    const news = await q(sb.from('app_news').select('*').order('published_at', { ascending: false }));
+    if (me.role === 'therapist') return viewNewsAdmin(news);
+    const seen = await viewedSet('news');
+    shell(`<a class="back-l" href="#/">${icon('back', 18)}Início</a>
+      ${header('Novidades', 'O que mudou no Lumivia')}
+      ${news.length ? news.map((n) => newsItem(n, !seen.has(n.id))).join('') : '<p class="muted">Nenhuma novidade por enquanto.</p>'}`, 'inicio');
+    await markViewed('news', news.filter((n) => !seen.has(n.id)).map((n) => n.id));
+  }
+  // Terapeuta: publicar, editar e apagar
+  function newsForm(n) {
+    return `<form id="newsf" class="stack">
+      ${field('ntitle', 'Título', `<input id="ntitle" type="text" maxlength="120" required value="${esc(n ? n.title : '')}" placeholder="Ex.: Registrar sobre ontem no Diário">`)}
+      ${field('nbody', 'Texto', `<textarea id="nbody" rows="5" placeholder="Conte o que mudou e como usar">${esc(n ? n.body || '' : '')}</textarea>`)}
+      ${field('nvideo', 'Vídeo do YouTube <span class="muted" style="font-weight:400">(opcional)</span>', `<input id="nvideo" type="url" value="${esc(n ? n.video_url || '' : '')}" placeholder="https://youtu.be/…">`)}
+      <button class="btn" type="submit">${n ? 'Salvar alterações' : 'Publicar para os pacientes'}</button>
+      ${n ? '<a class="btn ghost" href="#/novidades">Cancelar</a>' : ''}</form>`;
+  }
+  function bindNewsForm(n) {
+    enhanceRich('#nbody');
+    $('#newsf').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = $('#ntitle').value.trim(), body = $('#nbody').value.trim(), raw = $('#nvideo').value.trim();
+      const video_url = raw ? safeUrl(raw) : null;
+      if (!title) return toast('Escreva um título.', true);
+      if (raw && !ytId(video_url)) return toast('O link do vídeo precisa ser do YouTube.', true);
+      const row = { title, body: body || null, video_url };
+      try {
+        if (n) await q(sb.from('app_news').update(row).eq('id', n.id));
+        else await q(sb.from('app_news').insert(row));
+        toast(n ? 'Novidade atualizada.' : 'Novidade publicada. Os pacientes veem no Início.');
+        go('#/novidades'); if (!n) viewNews();
+      } catch (err) { /* toast */ }
+    });
+  }
+  function viewNewsAdmin(news) {
+    shell(`<a class="back-l" href="#/biblioteca">${icon('back', 18)}Biblioteca</a>
+      ${header('Novidades do app', 'Aparecem para todos os pacientes, no Início e em Conta')}
+      <details class="card"${news.length ? '' : ' open'}><summary>Nova novidade</summary>${newsForm(null)}</details>
+      <h2 class="sec">Publicadas</h2>
+      ${news.length ? news.map((n) => `<article class="card news"><p class="kicker-amber">${esc(newsDate(n.published_at))}</p><h2>${esc(n.title)}</h2>
+        ${n.body ? richBlock(n.body) : ''}${ytId(n.video_url) ? `<p class="muted small">${icon('play', 16)} Com vídeo do YouTube</p>` : ''}
+        <div class="row-gap"><a class="btn sm ghost" href="#/novidades/${n.id}">${icon('pen', 16)}Editar</a>
+        <button type="button" class="btn sm danger" data-news-del="${n.id}">Apagar</button></div></article>`).join('') : '<p class="muted">Nenhuma novidade publicada.</p>'}`, 'biblioteca');
+    bindNewsForm(null);
+    $$('[data-news-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Apagar esta novidade? Ela some para todos os pacientes.')) return;
+      try { await q(sb.from('app_news').delete().eq('id', b.dataset.newsDel)); toast('Novidade apagada.'); viewNews(); } catch (err) { /* toast */ }
+    }));
+  }
+  async function viewNewsEdit(id) {
+    loading();
+    const n = await q(sb.from('app_news').select('*').eq('id', id).maybeSingle());
+    if (!n) { go('#/novidades'); return; }
+    shell(`<a class="back-l" href="#/novidades">${icon('back', 18)}Novidades do app</a>${header('Editar novidade', `Publicada em ${newsDate(n.published_at)}`)}
+      <section class="card">${newsForm(n)}</section>`, 'biblioteca');
+    bindNewsForm(n);
+  }
+
   /* ================= PACIENTE ================= */
   async function viewHome() {
     loading();
@@ -1688,6 +1768,7 @@
     const latestSeen = latest[0] ? (await viewedSet('content')).has(latest[0].id) : true;
     const nov = await novLoadMine();
     const cm = await cmMine();
+    const newsCard = await newsHomeCard().catch(() => '');
     const novCards = novHomeCards(nov.exs, nov.by, nov.exs.length ? await viewedSet('exercise_result') : new Set());
     const wheelCard = wheelAcc ? `<a class="highlight wheel-hl" href="#/roda"><span class="hl-ico">${icon('wheel', 22)}</span>
         <span><span class="kicker-amber">${wheelAny.length ? 'SUA RODA DA VIDA' : 'EXERCÍCIO LIBERADO'}</span><strong>${wheelAny.length ? 'Ver sua roda e evolução' : 'Faça sua Roda da Vida'}</strong></span></a>` : '';
@@ -1709,6 +1790,7 @@
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
       ${cm && !cm.accepted_at ? cmHomeCard(cm) : ''}
+      ${newsCard}
       ${novCards}
       ${wheelCard}
       ${cm && cm.accepted_at ? cmHomeCard(cm) : ''}
@@ -2766,7 +2848,9 @@
       return `<span class="badge personal">Personalizado · ${n} ${n === 1 ? 'paciente' : 'pacientes'}${c.respect_phase ? '' : ' · já liberado'}</span>`;
     };
 
+    const newsN = (await sb.from('app_news').select('id', { count: 'exact', head: true })).count || 0;
     shell(`${header('Biblioteca', 'Conteúdos de cada fase da jornada')}
+      <a class="card link-card" href="#/novidades">${icon('spark', 22)}<span><strong>Novidades do app</strong><span class="muted small">${newsN ? `${newsN} ${newsN === 1 ? 'publicada' : 'publicadas'} · ` : ''}avise os pacientes sobre mudanças</span></span>${icon('chevron', 18)}</a>
       <details class="card" ${contents.length ? '' : 'open'}>
         <summary>+ Novo conteúdo</summary>
         <form id="cf" class="stack">
@@ -2855,6 +2939,7 @@
     loadingView = true;
     try {
       if (h === '#/conta') return await viewAccount();
+      if (h === '#/novidades') return await viewNews();
       if ((m = h.match(/^#\/conteudo\/([\w-]+)$/))) return await viewContent(m[1]);
       if (me.role === 'therapist') {
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
@@ -2866,6 +2951,7 @@
         if ((m = h.match(/^#\/paciente\/([\w-]+)$/))) return await viewPatient(m[1]);
         if ((m = h.match(/^#\/biblioteca\/editar\/([\w-]+)$/))) return await viewEditContent(m[1]);
         if (h === '#/biblioteca') return await viewLibrary();
+        if ((m = h.match(/^#\/novidades\/([\w-]+)$/))) return await viewNewsEdit(m[1]);
         return await viewPatients();
       }
       if (h === '#/acordos') return await viewTerms();
