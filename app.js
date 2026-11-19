@@ -430,6 +430,7 @@
     link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     leaf: '<path d="M12 21c-4-3-7-6.5-7-10a4.5 4.5 0 0 1 7-3.7A4.5 4.5 0 0 1 19 11c0 3.5-3 7-7 10z"/><path d="M12 7.3V21"/>',
     back: '<path d="M15 18l-6-6 6-6"/>',
+    chevron: '<path d="M9 18l6-6-6-6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
@@ -1559,6 +1560,113 @@
     </section>`;
   }
 
+  /* ================= COMPROMISSO COMIGO MESMO ================= */
+  const CM_INTRO = 'Eu tenho interesse na sua evolução. A psicóloga e o psiquiatra também. Mas a pessoa mais interessada precisa ser você.';
+  const CM_PHRASE = 'Eu sou a pessoa mais interessada na minha evolução. Não escolhi tudo o que me aconteceu, mas escolho cuidar do que faço com isso a partir de hoje.';
+  const cmWhen = (d) => `${toDate(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${fmtTime(d)}`;
+  const cmMine = () => q(sb.from('commitments').select('*').eq('patient_id', me.id).maybeSingle());
+
+  // Início (paciente): cartão enquanto não assumiu; depois, uma linha discreta
+  function cmHomeCard(c) {
+    if (!c) return '';
+    if (!c.accepted_at) return `<section class="card consent cm-new">
+        <span class="kicker-amber">QUEM SEGURA O LEME<span class="newtag">NOVO</span></span>
+        <h2>O seu compromisso está esperando por você</h2>
+        <p class="muted small">Leia com calma e, se fizer sentido, assuma esse compromisso com você mesmo.</p>
+        <a class="btn" href="#/compromisso">Ler meu compromisso</a></section>`;
+    return `<a class="cm-mini" href="#/compromisso"><span aria-hidden="true">⛵</span><span><strong>Meu compromisso</strong>
+      <span class="muted small">Assumido em ${esc(toDate(c.accepted_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }))} · toque para reler</span></span>${icon('chevron', 18)}</a>`;
+  }
+
+  // Paciente: ler e assumir (uma única vez)
+  async function viewCommitment() {
+    loading();
+    const c = await cmMine();
+    if (!c) { go('#/'); return; }
+    const done = !!c.accepted_at;
+    shell(`<a class="back-l" href="#/">${icon('back', 18)}Início</a>
+      <div class="cm-head"><span class="cm-k">QUEM SEGURA O LEME</span><h1 class="cm-t">O seu compromisso</h1></div>
+      ${c.intro ? `<p class="cm-intro">${esc(c.intro)}</p>` : ''}
+      <blockquote class="cm-box">${esc(c.phrase)}</blockquote>
+      ${done ? `<section class="card">
+          <p class="consent-ok">${icon('check', 18)}<span>Você assumiu este compromisso em ${esc(fmtDate(c.accepted_at))}, às ${esc(fmtTime(c.accepted_at))}.</span></p>
+          ${c.first_step ? `<div class="cm-step"><b>O seu primeiro passo:</b><span>${esc(c.first_step)}</span></div>` : ''}
+          <p class="muted small">Volte aqui sempre que precisar lembrar.</p></section>`
+        : `<p class="muted">Leia a frase em voz alta. Ela faz sentido para você?</p>
+        <form id="cmf" class="card stack">
+          <div class="field"><label for="cmstep">Qual vai ser o seu primeiro passo para cumprir isso? <span class="muted small">(opcional)</span></label>
+            <textarea id="cmstep" rows="3" maxlength="500" placeholder="Ex.: quando vier a vontade de me isolar, mandar mensagem para alguém."></textarea></div>
+          <button class="btn" type="submit">Eu assumo este compromisso</button>
+          <p class="muted small">Você assume uma vez só. Depois, ele fica guardado aqui para você reler quando quiser.</p></form>`}`, 'inicio');
+    if (!done) $('#cmf').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('#cmf button[type=submit]'); btn.disabled = true;
+      try {
+        await q(sb.rpc('accept_commitment', { step: $('#cmstep').value.trim() }));
+        toast('Compromisso assumido. Ele fica guardado aqui para você.');
+        viewCommitment();
+      } catch (err) { btn.disabled = false; }
+    });
+  }
+
+  // Diário: lembrete gentil depois de um registro Difícil ou Baixo
+  function cmRemind(c) {
+    const el = document.createElement('div');
+    el.className = 'fsheet';
+    el.innerHTML = `<div class="fpanel cm-remind" role="dialog" aria-modal="true" aria-labelledby="cmrh">
+      <span class="cm-k" id="cmrh" tabindex="-1">LEMBRA DO SEU COMPROMISSO?</span>
+      <blockquote class="cm-box sm">${esc(c.phrase)}</blockquote>
+      <p>Hoje não precisa resolver tudo. Um passo pequeno já é cuidar de você.</p>
+      ${c.first_step ? `<div class="cm-step"><b>O passo que você escolheu:</b><span>${esc(c.first_step)}</span></div>` : ''}
+      <button type="button" class="btn" id="cmok">Ok, obrigado</button></div>`;
+    document.body.appendChild(el);
+    const close = () => { el.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    el.addEventListener('click', (e) => { if (e.target === el) close(); });
+    const ok = el.querySelector('#cmok');
+    ok.addEventListener('click', close);
+    ok.focus();
+  }
+
+  // Terapeuta: cartão na ficha
+  function cmTherapistCard(c) {
+    const form = (cur) => `<form id="cmform" class="stack">
+        <div class="field"><label for="cmintro">Texto de abertura</label><textarea id="cmintro" rows="4" maxlength="1000">${esc(cur ? cur.intro || '' : CM_INTRO)}</textarea></div>
+        <div class="field"><label for="cmphrase">A frase do compromisso</label><textarea id="cmphrase" rows="5" maxlength="600" required>${esc(cur ? cur.phrase : CM_PHRASE)}</textarea></div>
+        <p class="muted small">O paciente lê, pode escrever o primeiro passo dele e assume uma vez só. Depois disso, o texto fica travado.</p>
+        <div class="row-gap"><button class="btn sm" type="submit">${cur ? 'Salvar alterações' : 'Liberar compromisso'}</button>
+        ${cur ? '<button type="button" class="btn sm ghost danger-t" id="cmdel">Retirar compromisso</button>' : ''}</div></form>`;
+    if (!c) return `<section class="card" id="cmcard"><h2>Compromisso comigo mesmo</h2>
+      <p class="muted small">Uma frase que o paciente assume com ele mesmo. Aparece no Início dele quando você liberar.</p>
+      <details class="cond"><summary>Escrever e liberar</summary>${form(null)}</details></section>`;
+    if (!c.accepted_at) return `<section class="card" id="cmcard"><div class="term-row"><h2>Compromisso</h2><span class="status pending">Aguardando</span></div>
+      <p class="muted small">Liberado em ${esc(fmtDate(c.created_at))}. Enquanto ele não assumir, você ainda pode ajustar o texto.</p>${form(c)}</section>`;
+    return `<section class="card" id="cmcard"><div class="term-row"><h2>Compromisso</h2><span class="status ok">${icon('check', 16)}Assumido · ${esc(cmWhen(c.accepted_at))}</span></div>
+      <blockquote class="cm-box sm">${esc(c.phrase)}</blockquote>
+      ${c.first_step ? `<div class="cm-step"><b>Primeiro passo que ele escolheu:</b><span>${esc(c.first_step)}</span></div>` : '<p class="muted small">Ele não escreveu um primeiro passo.</p>'}
+      <p class="muted small">🔒 Depois de assumido, o texto não muda mais.</p></section>`;
+  }
+  function bindCmForm(pid, c) {
+    const f = $('#cmform');
+    if (!f) return;
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const intro = $('#cmintro').value.trim(), phrase = $('#cmphrase').value.trim();
+      if (!phrase) return toast('Escreva a frase do compromisso.', true);
+      try {
+        if (c) await q(sb.from('commitments').update({ intro: intro || null, phrase }).eq('patient_id', pid));
+        else await q(sb.from('commitments').insert({ patient_id: pid, intro: intro || null, phrase }));
+        toast(c ? 'Compromisso atualizado.' : 'Compromisso liberado. O paciente vê no Início.');
+        viewPatient(pid);
+      } catch (err) { /* toast */ }
+    });
+    if ($('#cmdel')) $('#cmdel').addEventListener('click', async () => {
+      if (!confirm('Retirar o compromisso? Ele some do Início do paciente.')) return;
+      try { await q(sb.from('commitments').delete().eq('patient_id', pid)); toast('Compromisso retirado.'); viewPatient(pid); } catch (err) { /* toast */ }
+    });
+  }
+
   /* ================= PACIENTE ================= */
   async function viewHome() {
     loading();
@@ -1577,6 +1685,7 @@
     ]);
     const latestSeen = latest[0] ? (await viewedSet('content')).has(latest[0].id) : true;
     const nov = await novLoadMine();
+    const cm = await cmMine();
     const novCards = novHomeCards(nov.exs, nov.by, nov.exs.length ? await viewedSet('exercise_result') : new Set());
     const wheelCard = wheelAcc ? `<a class="highlight wheel-hl" href="#/roda"><span class="hl-ico">${icon('wheel', 22)}</span>
         <span><span class="kicker-amber">${wheelAny.length ? 'SUA RODA DA VIDA' : 'EXERCÍCIO LIBERADO'}</span><strong>${wheelAny.length ? 'Ver sua roda e evolução' : 'Faça sua Roda da Vida'}</strong></span></a>` : '';
@@ -1597,8 +1706,10 @@
     shell(`<header class="hd"><div><p class="muted small cap">${esc(fmtFull(new Date()))}</p><h1>Olá, ${esc(firstName(me.full_name))}</h1></div>
         ${avatarHtml(me, urls, '', '#/conta', 'Minha conta')}</header>
       ${consentCard}
+      ${cm && !cm.accepted_at ? cmHomeCard(cm) : ''}
       ${novCards}
       ${wheelCard}
+      ${cm && cm.accepted_at ? cmHomeCard(cm) : ''}
       ${installCard(true)}
       <section class="journey">
         <div class="row-between"><span class="kicker">Sua jornada</span><span class="kicker">${current ? `Fase ${current.position} de ${phases.length}` : ''}</span></div>
@@ -1819,7 +1930,9 @@
       try {
         await q(sb.from('diary_entries').insert({ patient_id: me.id, mood, reflection: reflection || null }));
         toast('Registro salvo.');
-        viewDiary();
+        const cm = mood <= 1 ? await cmMine().catch(() => null) : null;
+        await viewDiary();
+        if (cm && cm.accepted_at) cmRemind(cm);
       } catch (err) { btn.disabled = false; }
     });
     bindChecks('data-task', 'tasks');
@@ -1982,6 +2095,7 @@
     const lastSessionAt = sessions[0] ? new Date(sessions[0].created_at) : null;
     const moodDiary = await q(sb.from('diary_entries').select('mood,created_at').eq('patient_id', pid).gte('created_at', new Date(Date.now() - 42 * DAY).toISOString()));
     const novExs = await q(sb.from('novelty_exercises').select('*').eq('patient_id', pid).order('created_at', { ascending: false }));
+    const cmRow = await q(sb.from('commitments').select('*').eq('patient_id', pid).maybeSingle());
     const novSteps = novExs.length ? await q(sb.from('novelty_steps').select('*').in('exercise_id', novExs.map((e) => e.id))) : [];
     const novBy = {};
     novSteps.forEach((x) => { (novBy[x.exercise_id] = novBy[x.exercise_id] || []).push(x); });
@@ -2067,6 +2181,7 @@
       </section>
       ${personalCard}
       ${wheelTherapistCard(wAcc, wEntries)}
+      ${cmTherapistCard(cmRow)}
       ${novTherapistCard(pid, novExs, novBy)}
       <section class="card"><h2>Metas combinadas</h2>${listRows(goals, 'goals', 'meta')}</section>
       <section class="card"><div class="row-between"><h2>Tarefas</h2><span class="muted small">${tasks.filter((t) => t.done).length} de ${tasks.length} feitas</span></div>${listRows(tasks, 'tasks', 'tarefa')}</section>
@@ -2093,6 +2208,7 @@
     });
     bindPhoto('pphoto', pid, p.avatar_path, () => viewPatient(pid));
     bindNovForm(pid);
+    bindCmForm(pid, cmRow);
     bindReceipt(cs, p);
     bindTermsForm(pid, () => viewPatient(pid));
     if ($('#wheel-release')) $('#wheel-release').addEventListener('click', async () => {
@@ -2682,6 +2798,7 @@
       }
       if (h === '#/acordos') return await viewTerms();
       if (h === '#/roda') return await viewWheel();
+      if (h === '#/compromisso') return await viewCommitment();
       if ((m = h.match(/^#\/exercicio\/([\w-]+)\/etapa\/([123])$/))) return await viewNoveltyStep(m[1], Number(m[2]));
       if ((m = h.match(/^#\/exercicio\/([\w-]+)$/))) return await viewNovelty(m[1]);
       if (h === '#/conteudos') return await viewContents();

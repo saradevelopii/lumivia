@@ -531,3 +531,24 @@ body.sheet-open { overflow: hidden; }
 .nanswers dt { font-size: 12px; font-weight: 600; color: var(--muted); }
 .nanswers dd { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
 @media (max-width: 380px) { .vs { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- Compromisso comigo mesmo ---------- */
+.cm-new { border: 2px solid #E9CF9F; }
+.cm-head { display: flex; flex-direction: column; gap: 6px; }
+.cm-k { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: #B4471F; }
+.cm-k:focus { outline: none; }
+.cm-t { font-family: Georgia, "Times New Roman", serif; font-size: 34px; font-weight: 700; }
+.cm-intro { font-size: 17px; margin: 0; }
+.cm-box { margin: 0; background: #D3E6E2; border-radius: 20px; padding: 20px 20px; font-family: Georgia, "Times New Roman", serif; font-weight: 700; font-size: 21px; line-height: 1.45; color: var(--ink); }
+.cm-box.sm { font-size: 16px; padding: 14px 16px; }
+.cm-remind .cm-box { background: #fff; }
+.cm-step { background: var(--brand-l); border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; font-size: 15px; color: var(--brand-d); }
+.cm-step b { font-weight: 600; }
+.cm-remind { background: #FDF0DA; }
+.cm-remind p { margin: 0; }
+.cm-mini { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: 16px; padding: 12px 14px; border-left: 4px solid #B4471F; color: var(--ink); text-decoration: none; }
+.cm-mini > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; }
+.cm-mini strong { color: var(--brand); }
+.cm-mini svg { color: var(--brand); flex-shrink: 0; }
+.row-gap { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.danger-t { color: var(--danger); }
