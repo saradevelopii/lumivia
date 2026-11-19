@@ -738,7 +738,9 @@
   // opt.notes: { [entry_id]: { note, pinned } } -> mostra nota privada e ações (só terapeuta)
   function diaryItem(e, opt = {}) {
     const clamp = opt.clamp !== false;
-    const when = opt.timeOnly ? `<span class="time">${esc(fmtTime(e.created_at))}</span>` : `${esc(fmtFull(e.created_at))} · ${esc(fmtTime(e.created_at))}`;
+    const late = e.backdated ? `<span class="late">escrito depois · ${esc(toDate(e.written_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }))}, ${esc(fmtTime(e.written_at))}</span>` : '';
+    const when = opt.timeOnly ? (late || `<span class="time">${esc(fmtTime(e.created_at))}</span>`)
+      : `${esc(fmtFull(e.created_at))} · ${late || esc(fmtTime(e.created_at))}`;
     const n = opt.notes ? (opt.notes[e.id] || {}) : null;
     const tools = n ? `${n.note ? `<div class="pnote"><b>Nota privada · só você vê</b><div class="prose">${esc(n.note)}</div></div>` : ''}
       <div class="ftools"><button type="button" class="pin" data-pin="${e.id}" aria-pressed="${n.pinned ? 'true' : 'false'}">📌 Levar para a sessão</button>
@@ -1868,18 +1870,26 @@
     let months = 3;
     const olderCount = async () => (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', me.id).lt('created_at', monthsAgoStart(months).toISOString())).count || 0;
     let older = await olderCount();
-    let mood = null;
+    let mood = null, back = false;
     const done = tasks.filter((t) => t.done).length;
+    const yest = new Date(Date.now() - DAY);
+    const yestTxt = yest.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
 
     shell(`${header('Diário', 'Sua terapeuta lê antes da próxima sessão')}
       <form id="df" class="stack">
+        <div class="when-sw" role="group" aria-label="Sobre qual dia é este registro?">
+          <span class="muted small">Sobre:</span>
+          <button type="button" class="pill" data-when="0" aria-pressed="true">Hoje</button>
+          <button type="button" class="pill" data-when="1" aria-pressed="false">Ontem · ${esc(yestTxt)}</button>
+        </div>
+        <p class="when-note" id="whennote" hidden>Este registro vai aparecer no dia de ontem, e é nele que conta no seu bem-estar. Só dá para registrar até 1 dia para trás.</p>
         <section class="card" id="mcard">
           <h2 id="mh">Como você está agora?</h2>
           <p class="mwarn" id="mwarn" role="alert" hidden>💛 Antes de salvar, escolha como você está. Pode ser o que mais se aproxima.</p>
           <div class="moods" role="group" aria-labelledby="mh">${MOODS.map((m, i) => `<button type="button" class="mood" data-mood="${i}" aria-pressed="false">${m}</button>`).join('')}</div>
         </section>
         <section class="card">
-          <label for="ref" class="h2">Reflexão do momento</label>
+          <label for="ref" class="h2" id="reflab">Reflexão do momento</label>
           <textarea id="ref" rows="5" placeholder="O que você está percebendo em si?"></textarea>
           <p class="small muted" id="kept" hidden>✓ Seu texto continua aqui.</p>
         </section>
@@ -1910,6 +1920,14 @@
     });
 
     enhanceRich('#ref');
+    $$('[data-when]').forEach((b) => b.addEventListener('click', () => {
+      back = b.dataset.when === '1';
+      $$('[data-when]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      $('#whennote').hidden = !back;
+      $('#mh').textContent = back ? 'Como você estava ontem?' : 'Como você está agora?';
+      $('#reflab').textContent = back ? 'Reflexão sobre ontem' : 'Reflexão do momento';
+      $('#df button[type=submit]').textContent = back ? 'Salvar registro de ontem' : 'Salvar registro';
+    }));
     $$('[data-mood]').forEach((b) => b.addEventListener('click', () => {
       mood = Number(b.dataset.mood);
       $$('[data-mood]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
@@ -1928,7 +1946,7 @@
       const btn = $('#df button[type=submit]');
       btn.disabled = true;
       try {
-        await q(sb.from('diary_entries').insert({ patient_id: me.id, mood, reflection: reflection || null }));
+        await q(sb.from('diary_entries').insert({ patient_id: me.id, mood, reflection: reflection || null, backdated: back }));
         toast('Registro salvo.');
         const cm = mood <= 1 ? await cmMine().catch(() => null) : null;
         await viewDiary();
@@ -2102,7 +2120,7 @@
     const diaryTotal = (await sb.from('diary_entries').select('id', { count: 'exact', head: true }).eq('patient_id', pid)).count || 0;
     const pinnedCount = (await sb.from('diary_notes').select('entry_id', { count: 'exact', head: true }).eq('patient_id', pid).eq('pinned', true)).count || 0;
     const sinceRef = lastSessionAt || new Date(Date.now() - 7 * DAY);
-    const fresh = diary.filter((e) => new Date(e.created_at) > sinceRef);
+    const fresh = diary.filter((e) => new Date(e.written_at || e.created_at) > sinceRef);
     const diaryHighlights = !diaryTotal ? '<p class="muted">O paciente ainda não escreveu no diário.</p>' : `
       <section class="card sumcard"><p class="kicker">${lastSessionAt ? `Desde a última sessão (${esc(fmtDate(sessions[0].session_date))})` : 'Nos últimos 7 dias'}</p>
         <h2>${fresh.length ? `${fresh.length} ${fresh.length === 1 ? 'registro novo' : 'registros novos'}` : 'Nenhum registro novo'}</h2>${moodDist(fresh, true)}</section>
@@ -2349,10 +2367,10 @@
       const rows = await q(sb.from('diary_notes').select('entry_id,note,pinned').eq('patient_id', pid));
       notes = Object.fromEntries(rows.map((r) => [r.entry_id, r]));
       const pinIds = rows.filter((r) => r.pinned).map((r) => r.entry_id);
-      const pins = pinIds.length ? await q(sb.from('diary_entries').select('id,mood,reflection,created_at').in('id', pinIds).order('created_at', { ascending: false })) : [];
+      const pins = pinIds.length ? await q(sb.from('diary_entries').select('id,mood,reflection,created_at,backdated').in('id', pinIds).order('created_at', { ascending: false })) : [];
       const short = (t) => { const x = String(t || '').replace(/[*_]/g, '').replace(/\s+/g, ' ').trim(); return x.length > 70 ? x.slice(0, 70) + '…' : x; };
       $('#pinbox').innerHTML = pins.length ? `<section class="toleva"><div class="row-between"><strong>📌 Levar para a sessão</strong><span class="muted small">${pins.length} ${pins.length === 1 ? 'registro' : 'registros'}</span></div>
-        <ul>${pins.map((e) => `<li><a href="#" data-goto="${e.id}"><b>${esc(fmtDate(e.created_at))} ${esc(fmtTime(e.created_at))}</b> · ${MOODS[e.mood] || 'sem humor'} — ${esc(short((notes[e.id] && notes[e.id].note) || e.reflection) || 'sem texto')}</a></li>`).join('')}</ul></section>` : '';
+        <ul>${pins.map((e) => `<li><a href="#" data-goto="${e.id}"><b>${esc(fmtDate(e.created_at))}${e.backdated ? ' (escrito depois)' : ' ' + esc(fmtTime(e.created_at))}</b> · ${MOODS[e.mood] || 'sem humor'} — ${esc(short((notes[e.id] && notes[e.id].note) || e.reflection) || 'sem texto')}</a></li>`).join('')}</ul></section>` : '';
       $$('[data-goto]').forEach((a) => a.addEventListener('click', (ev) => {
         ev.preventDefault();
         const el = document.getElementById('e-' + a.dataset.goto);

@@ -564,3 +564,10 @@ body.sheet-open { overflow: hidden; }
 fieldset.field { padding: 0; min-width: 0; }
 fieldset.field > legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 6px; }
 .snum { font-weight: 700; }
+
+/* ---------- Diário: registro sobre ontem ---------- */
+.when-sw { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.when-sw .pill[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
+.when-note { margin: -4px 0 0; background: var(--amber-bg); color: var(--amber); border-radius: 12px; padding: 10px 12px; font-size: 14px; font-weight: 500; }
+.when-note[hidden] { display: none; }
+.late { font-style: italic; color: var(--amber); font-weight: 500; text-transform: none; letter-spacing: 0; }
