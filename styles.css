@@ -563,3 +563,4 @@ body.sheet-open { overflow: hidden; }
 .row-gap .btn.sm svg { margin-right: 6px; }
 fieldset.field { padding: 0; min-width: 0; }
 fieldset.field > legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 6px; }
+.snum { font-weight: 700; }

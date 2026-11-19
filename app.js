@@ -2165,7 +2165,7 @@
       </section>`;
 
     shell(`${darkHeader('', p.full_name || p.email, `${total} ${total === 1 ? 'sessão registrada' : 'sessões registradas'} · ${p.email || ''}`, ['#/pacientes', 'Pacientes'])}
-      ${off ? `<p class="consent-pending">Paciente inativo desde ${esc(fmtDate(p.deactivated_at || new Date()))}. Ele não consegue acessar o site.</p>` : `<a class="btn" href="#/paciente/${pid}/nova-sessao">Registrar sessão</a>`}
+      ${off ? `<p class="consent-pending">Paciente inativo desde ${esc(fmtDate(p.deactivated_at || new Date()))}. Ele não consegue acessar o site.</p>` : `<a class="btn" href="#/paciente/${pid}/nova-sessao">Registrar sessão ${total + 1}</a>`}
       <section class="card">
         <h2>Perfil do paciente</h2>
         <div class="profile-row">${avatarHtml(p, urls, 'lg')}${photoControls('pphoto', !!p.avatar_path)}</div>
@@ -2189,7 +2189,7 @@
       <h2 class="sec">Diário</h2>
       ${diaryHighlights}
       <h2 class="sec">Sessões</h2>
-      ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
+      ${sessions.length ? sessions.map((s, i) => `<details class="card"><summary><span><span class="snum">Sessão ${total - i}</span> · ${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
           ${s.summary ? `<h3 class="sub-h">Resumo</h3>${richBlock(s.summary)}` : ''}
           ${s.weekly_task ? `<h3 class="sub-h">${sessTasks(s).length > 1 ? 'Objetivos da semana' : 'Objetivo da semana'}</h3>${tasksHtml(s)}` : ''}
           ${(() => { const h = materialsHtml(pMats.filter((m) => m.session_id === s.id), pUrls); return h ? `<h3 class="sub-h">Materiais</h3><div class="stack" style="gap:8px">${h}</div>` : ''; })()}
@@ -2485,12 +2485,15 @@
       if (!s) { go('#/paciente/' + pid); return; }
     }
     const edit = !!s;
+    // número da sessão: ordem cronológica (data da sessão e, no mesmo dia, ordem de registro)
+    const all = await q(sb.from('sessions').select('id').eq('patient_id', pid).order('session_date').order('created_at'));
+    const num = edit ? all.findIndex((x) => x.id === s.id) + 1 : all.length + 1;
     const objs = edit ? sessTasks(s) : [];
     const objRow = (v, i) => `<div class="obj-row"><input type="text" data-obj value="${esc(v)}" maxlength="300" aria-label="Objetivo ${i}" placeholder="${i === 1 ? 'Ex.: escrever uma carta para você daqui a 1 ano' : 'Outro objetivo'}">
         <button type="button" class="icon-btn" data-obj-del aria-label="Remover objetivo ${i}">${icon('x', 18)}</button></div>`;
     const keepChecked = !edit || linked.length > 0 || !objs.length;
 
-    shell(`${darkHeader('', edit ? 'Editar sessão' : 'Registrar sessão', p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
+    shell(`${darkHeader('', edit ? `Editar sessão ${num}` : `Registrar sessão ${num}`, p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
       ${edit ? `<p class="edit-note">${icon('pen', 18)}<span>Você está editando a sessão de ${esc(fmtDate(s.session_date))}. O paciente vê as alterações assim que você salvar.</span></p>` : ''}
       <form id="sf" class="stack">
         <section class="card">
