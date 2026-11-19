@@ -711,9 +711,10 @@
 
 
   /* ================= diário: histórico por mês ================= */
-  const MOOD_COLOR = ['#B5523F', '#C98A2B', '#8F9A95', '#4E9A82', '#2F6B5E'];
-  const MOOD_BG = ['#F3D9D4', '#F6E7CC', '#E6ECE8', '#D5E3DD', '#BFD8CD'];
-  const MOOD_FG = ['#8A3B2E', '#7A4E0E', '#4C5852', '#2F6B5E', '#1F4D43'];
+  // cores dos humores vêm do CSS (mudam no tema escuro)
+  const MOOD_COLOR = [0, 1, 2, 3, 4].map((i) => `var(--mc${i})`);
+  const MOOD_BG = [0, 1, 2, 3, 4].map((i) => `var(--mb${i})`);
+  const MOOD_FG = [0, 1, 2, 3, 4].map((i) => `var(--mf${i})`);
   const moodTag = (m) => (m == null ? '' : `<span class="mtag" style="background:${MOOD_BG[m]};color:${MOOD_FG[m]}">${MOODS[m]}</span>`);
   // barra com todos os humores do período (não esconde os dias difíceis) + legenda em texto
   function moodDist(entries, onDark) {
@@ -882,6 +883,7 @@
       </section>
       ${isT ? '' : termsCard(myT, myCs, { therapist: false })}
       ${isT ? '' : `<a class="card link-card" href="#/novidades">${icon('spark', 22)}<span><strong>Novidades do Lumivia</strong><span class="muted small">O que mudou no app</span></span>${icon('chevron', 18)}</a>`}
+      ${themeCard()}
       ${installCard(false)}
       <section class="card">
         <form id="pw" class="stack">
@@ -904,6 +906,7 @@
       } catch (err) { /* toast já exibido */ }
     });
     $('#sair').addEventListener('click', () => sb.auth.signOut());
+    bindThemeCard();
     bindPhoto('myphoto', me.id, me.avatar_path, async () => { await loadMe(); viewAccount(); });
     bindReceipt(myCs, me);
     bindInstall();
@@ -917,10 +920,10 @@
 
   /* ================= RODA DA VIDA ================= */
   const WHEEL_GROUPS = [
-    { key: 'pessoal', label: 'Pessoal', color: '#2F6B5E' },
-    { key: 'profissional', label: 'Profissional', color: '#B7791F' },
-    { key: 'relacoes', label: 'Relacionamentos', color: '#3F6FA0' },
-    { key: 'qualidade', label: 'Qualidade de vida', color: '#7E57A0' }
+    { key: 'pessoal', label: 'Pessoal', color: 'var(--g1)' },
+    { key: 'profissional', label: 'Profissional', color: 'var(--g2)' },
+    { key: 'relacoes', label: 'Relacionamentos', color: 'var(--g3)' },
+    { key: 'qualidade', label: 'Qualidade de vida', color: 'var(--g4)' }
   ];
   const WHEEL_AREAS = [
     { key: 'saude', label: 'Saúde e disposição', short: 'Saúde', group: 'pessoal' },
@@ -937,7 +940,7 @@
     { key: 'espiritualidade', label: 'Espiritualidade', short: 'Espiritualidade', group: 'qualidade' }
   ];
   const areaLabel = (k) => (WHEEL_AREAS.find((a) => a.key === k) || { label: k }).label;
-  const groupColor = (g) => (WHEEL_GROUPS.find((x) => x.key === g) || {}).color || '#2F6B5E';
+  const groupColor = (g) => (WHEEL_GROUPS.find((x) => x.key === g) || {}).color || 'var(--g1)';
 
   // Desenha a roda: cada fatia é preenchida do centro até a nota; a linha tracejada é a roda de comparação
   function wheelSvg(scores, compare) {
@@ -945,23 +948,23 @@
     const pt = (r, a) => [(cx + r * Math.cos(a)).toFixed(1), (cy + r * Math.sin(a)).toFixed(1)];
     const desc = WHEEL_AREAS.map((a) => `${a.label}: ${scores[a.key] ?? 'sem nota'}`).join(', ');
     let s = `<svg viewBox="0 0 ${W} ${H}" class="wheel" role="img" aria-label="Roda da Vida. ${esc(desc)}">`;
-    for (let k = 2; k <= 10; k += 2) s += `<circle cx="${cx}" cy="${cy}" r="${(R * k) / 10}" fill="none" stroke="#DDE4E0" stroke-width="${k === 10 ? 1.5 : 1}"/>`;
+    for (let k = 2; k <= 10; k += 2) s += `<circle cx="${cx}" cy="${cy}" r="${(R * k) / 10}" fill="none" style="stroke:var(--wheel-grid)" stroke-width="${k === 10 ? 1.5 : 1}"/>`;
     WHEEL_AREAS.forEach((a, i) => {
       const a0 = -Math.PI / 2 + i * step, a1 = a0 + step;
       const [sx, sy] = pt(R, a0);
-      s += `<line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="#DDE4E0"/>`;
+      s += `<line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" style="stroke:var(--wheel-grid)"/>`;
       const v = Number(scores[a.key] ?? 0);
       if (v > 0) {
         const r = (R * v) / 10, [x0, y0] = pt(r, a0 + 0.012), [x1, y1] = pt(r, a1 - 0.012);
-        s += `<path d="M${cx},${cy} L${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1} Z" fill="${groupColor(a.group)}" fill-opacity="0.82"/>`;
+        s += `<path d="M${cx},${cy} L${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1} Z" style="fill:${groupColor(a.group)}" fill-opacity="0.82"/>`;
       }
       if (compare && compare[a.key] != null && Number(compare[a.key]) > 0) {
         const r = (R * Number(compare[a.key])) / 10, [x0, y0] = pt(r, a0 + 0.03), [x1, y1] = pt(r, a1 - 0.03);
-        s += `<path d="M${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1}" fill="none" stroke="#1F2A24" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round"/>`;
+        s += `<path d="M${x0},${y0} A${r},${r} 0 0 1 ${x1},${y1}" fill="none" style="stroke:var(--ink)" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round"/>`;
       }
       const am = a0 + step / 2, c = Math.cos(am), [lx, ly] = pt(R + (Math.abs(c) < 0.5 ? 22 : 16), am);
       const anchor = Math.abs(c) < 0.05 ? 'middle' : c > 0 ? 'start' : 'end';
-      s += `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="middle" font-size="15" fill="#3E4A44" font-family="Inter, sans-serif">${esc(a.short)} <tspan font-weight="700" fill="${groupColor(a.group)}">${scores[a.key] ?? '–'}</tspan></text>`;
+      s += `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="middle" font-size="15" style="fill:var(--ink-2)" font-family="Inter, sans-serif">${esc(a.short)} <tspan font-weight="700" style="fill:${groupColor(a.group)}">${scores[a.key] ?? '–'}</tspan></text>`;
     });
     return s + '</svg>';
   }
@@ -1669,6 +1672,34 @@
       if (!confirm('Retirar o compromisso? Ele some do Início do paciente.')) return;
       try { await q(sb.from('commitments').delete().eq('patient_id', pid)); toast('Compromisso retirado.'); viewPatient(pid); } catch (err) { /* toast */ }
     });
+  }
+
+  /* ================= TEMA (claro / escuro) ================= */
+  const THEME_KEY = 'lumivia-theme';
+  const darkMq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+  function themePref() { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+  function applyTheme() {
+    const p = themePref();
+    const dark = p === 'dark' || (p === 'auto' && darkMq && darkMq.matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', dark ? '#121A17' : '#2F6B5E');
+  }
+  if (darkMq && darkMq.addEventListener) darkMq.addEventListener('change', () => { if (themePref() === 'auto') applyTheme(); });
+  applyTheme();
+  function themeCard() {
+    const p = themePref();
+    const opt = (v, l) => `<button type="button" class="pill" data-theme-opt="${v}" aria-pressed="${p === v}">${l}</button>`;
+    return `<section class="card"><h2 id="themeh">Aparência</h2>
+      <div class="theme-sw" role="group" aria-labelledby="themeh">${opt('auto', 'Automático')}${opt('light', 'Claro')}${opt('dark', 'Escuro')}</div>
+      <p class="muted small">No automático, o Lumivia segue o tema do seu celular. A escolha vale só para este aparelho.</p></section>`;
+  }
+  function bindThemeCard() {
+    $$('[data-theme-opt]').forEach((b) => b.addEventListener('click', () => {
+      try { localStorage.setItem(THEME_KEY, b.dataset.themeOpt); } catch (e) { /* */ }
+      $$('[data-theme-opt]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      applyTheme();
+    }));
   }
 
   /* ================= NOVIDADES DO APP ================= */

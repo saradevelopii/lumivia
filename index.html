@@ -17,6 +17,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
+  <script>
+    // aplica o tema antes de desenhar a tela (evita piscar claro no modo escuro)
+    (function () {
+      var p = 'auto';
+      try { p = localStorage.getItem('lumivia-theme') || 'auto'; } catch (e) {}
+      var d = p === 'dark' || (p === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', d ? 'dark' : 'light');
+      if (d) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#121A17');
+    })();
+  </script>
 </head>
 <body>
   <div id="app"><div class="loading" role="status">Carregando…</div></div>
