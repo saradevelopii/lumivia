@@ -1984,7 +1984,7 @@
 
     const body = (s) => `
       ${s.summary ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Resumo da terapeuta</h3>${richBlock(s.summary)}</div>` : ''}
-      ${s.weekly_task ? `<div class="stack" style="gap:4px"><h3 class="sub-h">Combinado para a semana</h3><p class="prose">${esc(s.weekly_task)}</p></div>` : ''}
+      ${s.weekly_task ? `<div class="stack" style="gap:4px"><h3 class="sub-h">${sessTasks(s).length > 1 ? 'Objetivos da semana' : 'Combinado para a semana'}</h3>${tasksHtml(s)}</div>` : ''}
       ${(() => { const h = materialsHtml(mats.filter((m) => m.session_id === s.id), urls); return h ? `<div class="stack" style="gap:8px"><h3 class="sub-h">Materiais da sessão</h3>${h}</div>` : ''; })()}`;
 
     shell(`${header('Sessões', 'O que foi trabalhado em cada encontro')}
@@ -2191,11 +2191,11 @@
       <h2 class="sec">Sessões</h2>
       ${sessions.length ? sessions.map((s) => `<details class="card"><summary><span>${esc(fmtDate(s.session_date))} <span class="small">· ${seenTag('session', s.id)}</span></span></summary>
           ${s.summary ? `<h3 class="sub-h">Resumo</h3>${richBlock(s.summary)}` : ''}
-          ${s.weekly_task ? `<h3 class="sub-h">Tarefa</h3><p class="prose">${esc(s.weekly_task)}</p>
-            <button type="button" class="btn sm ghost" data-clear-task="${s.id}">Remover tarefa desta sessão</button>` : ''}
+          ${s.weekly_task ? `<h3 class="sub-h">${sessTasks(s).length > 1 ? 'Objetivos da semana' : 'Objetivo da semana'}</h3>${tasksHtml(s)}` : ''}
           ${(() => { const h = materialsHtml(pMats.filter((m) => m.session_id === s.id), pUrls); return h ? `<h3 class="sub-h">Materiais</h3><div class="stack" style="gap:8px">${h}</div>` : ''; })()}
           ${noteBy[s.id] ? `<h3 class="sub-h">Notas privadas</h3>${richBlock(noteBy[s.id])}` : ''}
-          <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></details>`).join('')
+          <div class="row-gap"><a class="btn sm ghost" href="#/paciente/${pid}/sessao/${s.id}/editar">${icon('pen', 16)}Editar sessão</a>
+          <button type="button" class="btn sm danger" data-del-session="${s.id}">Apagar sessão</button></div></details>`).join('')
         : '<p class="muted">Nenhuma sessão registrada.</p>'}
       ${statusCard}`, 'pacientes');
 
@@ -2259,18 +2259,8 @@
     async function removeSessionTasks(sid) {
       const s = sessions.find((x) => x.id === sid);
       await q(sb.from('tasks').delete().eq('session_id', sid));
-      if (s && s.weekly_task) await q(sb.from('tasks').delete().eq('patient_id', pid).is('session_id', null).eq('title', s.weekly_task));
+      for (const t of sessTasks(s)) await q(sb.from('tasks').delete().eq('patient_id', pid).is('session_id', null).eq('title', t));
     }
-    $$('[data-clear-task]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Remover a tarefa desta sessão? Ela também sai da lista de tarefas do paciente.')) return;
-      const sid = b.dataset.clearTask;
-      try {
-        await removeSessionTasks(sid);
-        await q(sb.from('sessions').update({ weekly_task: null }).eq('id', sid));
-        toast('Tarefa removida.');
-        viewPatient(pid);
-      } catch (err) { /* toast */ }
-    }));
     $$('[data-del-session]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Apagar esta sessão, seus materiais e a tarefa criada a partir dela? Isso não pode ser desfeito.')) return;
       const sid = b.dataset.delSession;
@@ -2475,33 +2465,74 @@
             <a class="btn sm" href="#/paciente/${pid}">Voltar à ficha</a></section>`}`, 'pacientes');
   }
 
-  async function viewNewSession(pid) {
+  // Objetivos da semana: guardados em sessions.weekly_task, um por linha
+  const sessTasks = (s) => ((s && s.weekly_task) || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  const tasksHtml = (s) => { const t = sessTasks(s); return t.length === 1 ? `<p class="prose">${esc(t[0])}</p>` : `<ul class="obj-list">${t.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`; };
+
+  // Registrar sessão (sid vazio) ou editar uma sessão já liberada
+  async function viewNewSession(pid, sid) {
     loading();
     const p = await q(sb.from('profiles').select('id,full_name,email').eq('id', pid).maybeSingle());
     if (!p) { go('#/pacientes'); return; }
+    let s = null, note = null, mats = [], linked = [];
+    if (sid) {
+      [s, note, mats, linked] = await Promise.all([
+        q(sb.from('sessions').select('*').eq('id', sid).eq('patient_id', pid).maybeSingle()),
+        q(sb.from('session_private_notes').select('notes').eq('session_id', sid).maybeSingle()),
+        q(sb.from('session_materials').select('*').eq('session_id', sid).order('created_at')),
+        q(sb.from('tasks').select('id,title').eq('session_id', sid))
+      ]);
+      if (!s) { go('#/paciente/' + pid); return; }
+    }
+    const edit = !!s;
+    const objs = edit ? sessTasks(s) : [];
+    const objRow = (v, i) => `<div class="obj-row"><input type="text" data-obj value="${esc(v)}" maxlength="300" aria-label="Objetivo ${i}" placeholder="${i === 1 ? 'Ex.: escrever uma carta para você daqui a 1 ano' : 'Outro objetivo'}">
+        <button type="button" class="icon-btn" data-obj-del aria-label="Remover objetivo ${i}">${icon('x', 18)}</button></div>`;
+    const keepChecked = !edit || linked.length > 0 || !objs.length;
 
-    shell(`${darkHeader('', 'Registrar sessão', p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
+    shell(`${darkHeader('', edit ? 'Editar sessão' : 'Registrar sessão', p.full_name || p.email, ['#/paciente/' + pid, 'Ficha do paciente'])}
+      ${edit ? `<p class="edit-note">${icon('pen', 18)}<span>Você está editando a sessão de ${esc(fmtDate(s.session_date))}. O paciente vê as alterações assim que você salvar.</span></p>` : ''}
       <form id="sf" class="stack">
         <section class="card">
-          ${field('sdate', 'Data da sessão', `<input id="sdate" type="date" value="${today()}" required>`)}
-          ${field('sum', 'Resumo para o paciente', '<textarea id="sum" rows="5" placeholder="Temas trabalhados, percepções, pontos de atenção"></textarea>')}
-          ${field('task', 'Tarefa para a semana', '<input id="task" type="text" placeholder="Ex.: escrever uma carta para você daqui a 1 ano">')}
-          <label class="check-line"><input type="checkbox" id="astask" checked> Adicionar também à lista de tarefas do paciente</label>
+          ${field('sdate', 'Data da sessão', `<input id="sdate" type="date" value="${esc(edit ? s.session_date : today())}" required>`)}
+          ${field('sum', 'Resumo para o paciente', `<textarea id="sum" rows="5" placeholder="Temas trabalhados, percepções, pontos de atenção">${esc(edit ? s.summary || '' : '')}</textarea>`)}
+          <fieldset class="field"><legend>Objetivos da semana</legend>
+            <div id="objs" class="stack" style="gap:8px">${(objs.length ? objs : ['']).map((v, i) => objRow(v, i + 1)).join('')}</div>
+            <button type="button" class="btn ghost sm" id="addobj">+ Adicionar outro objetivo</button></fieldset>
+          <label class="check-line"><input type="checkbox" id="astask"${keepChecked ? ' checked' : ''}> ${edit ? 'Manter os objetivos' : 'Adicionar os objetivos'} também na lista de tarefas do paciente</label>
         </section>
         <fieldset class="card">
           <legend class="h2" style="padding:0;margin-bottom:4px">Materiais</legend>
-          ${field('files', 'Arquivos (PDF, áudio, imagem · até 50 MB cada)', '<input id="files" type="file" multiple>')}
+          ${mats.length ? `<ul class="rows" id="oldmats">${mats.map((m) => `<li data-mat="${m.id}"><span class="mat-t">${icon(m.file_path ? 'file' : (ytId(m.url) ? 'play' : 'link'), 18)}${esc(m.title)}</span>
+            <button type="button" class="icon-btn" data-mat-del aria-label="Remover ${esc(m.title)}">${icon('trash', 18)}</button></li>`).join('')}</ul>` : ''}
+          ${field('files', `${edit ? 'Adicionar arquivos' : 'Arquivos'} (PDF, áudio, imagem · até 50 MB cada)`, '<input id="files" type="file" multiple>')}
           <div id="links" class="stack"></div>
           <button type="button" class="btn ghost sm" id="addlink">+ Adicionar link ou vídeo do YouTube</button>
         </fieldset>
         <section class="card">
-          ${field('notes', 'Notas privadas <span class="muted" style="font-weight:400">· só você vê</span>', '<textarea id="notes" rows="4" class="private"></textarea>')}
+          ${field('notes', 'Notas privadas <span class="muted" style="font-weight:400">· só você vê</span>', `<textarea id="notes" rows="4" class="private">${esc(note ? note.notes || '' : '')}</textarea>`)}
         </section>
-        <button class="btn" type="submit">Liberar para o paciente</button>
+        <button class="btn" type="submit">${edit ? 'Salvar alterações' : 'Liberar para o paciente'}</button>
+        ${edit ? `<a class="btn ghost" href="#/paciente/${pid}">Cancelar</a>` : ''}
       </form>`, 'pacientes');
 
     enhanceRich('#sum');
     enhanceRich('#notes');
+    const renum = () => $$('.obj-row').forEach((r, i) => { r.querySelector('[data-obj]').setAttribute('aria-label', `Objetivo ${i + 1}`); r.querySelector('[data-obj-del]').setAttribute('aria-label', `Remover objetivo ${i + 1}`); });
+    const bindObj = (r) => r.querySelector('[data-obj-del]').addEventListener('click', () => {
+      if ($$('.obj-row').length === 1) { r.querySelector('[data-obj]').value = ''; return; }
+      r.remove(); renum();
+    });
+    $$('.obj-row').forEach(bindObj);
+    $('#addobj').addEventListener('click', () => {
+      const w = document.createElement('div'); w.innerHTML = objRow('', $$('.obj-row').length + 1);
+      const r = w.firstElementChild; $('#objs').appendChild(r); bindObj(r); r.querySelector('[data-obj]').focus();
+    });
+    const removedMats = [];
+    $$('[data-mat-del]').forEach((b) => b.addEventListener('click', () => {
+      const li = b.closest('li'); removedMats.push(mats.find((m) => m.id === li.dataset.mat)); li.remove();
+      if (!$$('#oldmats li').length && $('#oldmats')) $('#oldmats').remove();
+    }));
     let n = 0;
     $('#addlink').addEventListener('click', () => {
       n += 1;
@@ -2518,34 +2549,53 @@
     $('#sf').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = $('#sf button[type=submit]');
+      const label = btn.textContent;
       const summary = $('#sum').value.trim();
-      const weekly_task = $('#task').value.trim();
+      const list = [...new Set($$('[data-obj]').map((i) => i.value.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+      const weekly_task = list.join('\n');
       const notes = $('#notes').value.trim();
       const files = Array.from($('#files').files || []);
       const links = $$('.link-row').map((r) => ({ title: r.querySelector('[data-lt]').value.trim(), url: safeUrl(r.querySelector('[data-lu]').value) }));
       if (links.some((l) => !l.url && l.title)) return toast('Algum link está sem endereço válido (comece com https://).', true);
       const big = files.find((f) => f.size > 50 * 1024 * 1024);
       if (big) return toast(`"${big.name}" passa de 50 MB. Para vídeos, use o YouTube não listado.`, true);
+      if (edit && removedMats.length && !confirm(`Remover ${removedMats.length === 1 ? '1 material' : removedMats.length + ' materiais'} desta sessão? Arquivos removidos não podem ser recuperados.`)) return;
 
       btn.disabled = true;
       btn.textContent = 'Salvando…';
       try {
-        const s = await q(sb.from('sessions').insert({ patient_id: pid, session_date: $('#sdate').value || today(), summary: summary || null, weekly_task: weekly_task || null }).select().single());
-        if (notes) await q(sb.from('session_private_notes').insert({ session_id: s.id, notes }));
+        const row = { session_date: $('#sdate').value || today(), summary: summary || null, weekly_task: weekly_task || null };
+        let id = sid;
+        if (edit) await q(sb.from('sessions').update(row).eq('id', sid));
+        else id = (await q(sb.from('sessions').insert({ patient_id: pid, ...row }).select().single())).id;
+        if (edit) await q(sb.from('session_private_notes').upsert({ session_id: id, notes: notes || null }, { onConflict: 'session_id' }));
+        else if (notes) await q(sb.from('session_private_notes').insert({ session_id: id, notes }));
+        if (removedMats.length) {
+          const paths = removedMats.map((m) => m.file_path).filter(Boolean);
+          if (paths.length) await sb.storage.from(BUCKET).remove(paths);
+          await q(sb.from('session_materials').delete().in('id', removedMats.map((m) => m.id)));
+        }
         for (const f of files) {
           btn.textContent = `Enviando ${f.name}…`;
           const path = await upload(`${pid}/${uuid()}-${cleanName(f.name)}`, f);
-          await q(sb.from('session_materials').insert({ session_id: s.id, title: f.name, file_path: path }));
+          await q(sb.from('session_materials').insert({ session_id: id, title: f.name, file_path: path }));
         }
         for (const l of links.filter((x) => x.url)) {
-          await q(sb.from('session_materials').insert({ session_id: s.id, title: l.title || l.url, url: l.url }));
+          await q(sb.from('session_materials').insert({ session_id: id, title: l.title || l.url, url: l.url }));
         }
-        if (weekly_task && $('#astask').checked) await q(sb.from('tasks').insert({ patient_id: pid, title: weekly_task, session_id: s.id }));
-        toast('Sessão liberada para o paciente.');
+        // lista de tarefas do paciente: acompanha os objetivos (as já marcadas como feitas continuam como estão)
+        const keep = $('#astask').checked ? list : [];
+        const gone = linked.filter((t) => !keep.includes(t.title));
+        if (gone.length) await q(sb.from('tasks').delete().in('id', gone.map((t) => t.id)));
+        for (const old of objs.filter((t) => !keep.includes(t))) await q(sb.from('tasks').delete().eq('patient_id', pid).is('session_id', null).eq('title', old));
+        const have = new Set(linked.map((t) => t.title));
+        const add = keep.filter((t) => !have.has(t));
+        if (add.length) await q(sb.from('tasks').insert(add.map((title) => ({ patient_id: pid, title, session_id: id }))));
+        toast(edit ? 'Sessão atualizada.' : 'Sessão liberada para o paciente.');
         go('#/paciente/' + pid);
       } catch (err) {
         btn.disabled = false;
-        btn.textContent = 'Liberar para o paciente';
+        btn.textContent = label;
       }
     });
   }
@@ -2787,6 +2837,7 @@
       if ((m = h.match(/^#\/conteudo\/([\w-]+)$/))) return await viewContent(m[1]);
       if (me.role === 'therapist') {
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/nova-sessao$/))) return await viewNewSession(m[1]);
+        if ((m = h.match(/^#\/paciente\/([\w-]+)\/sessao\/([\w-]+)\/editar$/))) return await viewNewSession(m[1], m[2]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/termo$/))) return await viewPatientTerms(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/roda-relatorio$/))) return await viewWheelReport(m[1]);
         if ((m = h.match(/^#\/paciente\/([\w-]+)\/diario(?:\/(novos))?$/))) return await viewPatientDiary(m[1], m[2]);
